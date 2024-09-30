@@ -19,7 +19,7 @@ install-editable:
 	${PIP} install -e .[dev] --config-settings editable_mode=compat -U
 
 test:
-	ruff check --target-version=py38 .
+	ruff check .
 
 build-docs:
 	cd docs && make html
