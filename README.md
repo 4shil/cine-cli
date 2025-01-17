@@ -30,6 +30,16 @@
 </div>
 <br>
 
+> [!WARNING]
+> You may have noticed, development slowing down and halting for a long while.
+> This is because I and the other contributors sadly no longer have the time to take this project to the next level (v4.5).
+>
+> This isn't the end, v4.4 may still continue to receive bug fixes here and there, but v4.4 is currently on
+> [feature freeze](https://en.wikipedia.org/wiki/Freeze_(software_engineering)), so new features will only be added once [v4.5 development](https://github.com/mov-cli/mov-cli/issues/352) begins again.
+> [v4.5](https://github.com/mov-cli/mov-cli/tree/v4.5) is a rewrite.
+>
+> We are hoping we have the time and motivation to return one day, hopefully with more contributors to help this time.
+
 > [!Note]
 > v4 is constantly changing so be sure to **keep the tool and your plugins up to date**. Also, I would advise not using it as a library yet as the API still has many breaking changes.
 
