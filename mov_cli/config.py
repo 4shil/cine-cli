@@ -186,7 +186,7 @@ class Config():
 
     @property
     def auto_try_next_scraper(self) -> bool:
-        return self.data.get("auto_try_next_scraper", True)
+        return self.data.get("auto_try_next_scraper", False)
 
     @property
     def hide_ip(self) -> bool:

@@ -27,7 +27,7 @@ dependencies = [
     "httpx",
     "importlib-metadata; python_version<'3.8'",
     "toml",
-    "devgoldyutils>=3.0.0beta1",
+    "devgoldyutils>=3.0.0",
     "typer>=0.12.2",
     "inquirer",
     "beautifulsoup4",
