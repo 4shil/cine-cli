@@ -9,7 +9,7 @@ quality = "auto"
 # parser = "lxml"
 # editor = "nano"
 skip_update_checker = false
-auto_try_next_scraper = true
+auto_try_next_scraper = false
 hide_ip = true
 
 # [mov-cli.quality]
