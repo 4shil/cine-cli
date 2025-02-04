@@ -45,7 +45,7 @@ def mov_cli(
     continue_watching: bool = typer.Option(False, "--continue", "-co", help = "Continue where you left off in a series."), 
     list_plugins: bool = typer.Option(False, "--list-plugins", "-lp", help = "Prints all configured plugins and their scrapers."), 
     clear_cache: bool = typer.Option(False, "--no-cache", "--clear-cache", help = "Clears ALL cache stored by mov-cli, including the temp directory cache."),
-    no_auto_try_next_scraper: bool = typer.Option(True, "--no-auto-try-next-scraper", "--no-atns", help = "Disables auto try next scraper."),
+    auto_try_next_scraper: bool = typer.Option(False, "--auto-try-next-scraper", "--atns", help = "Enables auto try next scraper."),
 ):
     config = Config()
     platform = what_platform()
@@ -58,7 +58,7 @@ def mov_cli(
         fzf = (fzf, ["ui", "fzf"]),
         preview = (preview, ["ui", "preview"]),
         limit = (limit, ["ui", "limit"]),
-        auto_try_next_scraper = not no_auto_try_next_scraper
+        auto_try_next_scraper = auto_try_next_scraper
     )
 
     if config.debug:
