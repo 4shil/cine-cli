@@ -10,11 +10,10 @@ if TYPE_CHECKING:
 
 import httpx
 import subprocess
-import unicodedata
 from devgoldyutils import Colours, LoggerAdapter
 
 from ..logger import mov_cli_logger
-from ..utils import get_temp_directory
+from ..utils import get_temp_directory, slugify
 from ..errors import ReferrerNotSupportedError
 
 from .player import Player
@@ -119,7 +118,7 @@ class VLC(Player):
         sub_file_exists_already = False
         temp_dir = get_temp_directory(self.platform)
 
-        file_name = unicodedata.normalize("NFKD", media.display_name).encode("ascii", "ignore").decode("ascii")
+        file_name = slugify(media.display_name)
         file_path = temp_dir.joinpath(file_name)
 
         if file_path.exists():

@@ -10,13 +10,11 @@ import os
 import httpx
 import typer
 import shutil
-import unicodedata
-import re
 
 from subprocess import call
 
 from ..cache import Cache
-from ..utils import what_platform, get_temp_directory
+from ..utils import what_platform, get_temp_directory, slugify
 
 __all__ = ()
 
@@ -97,13 +95,3 @@ def image_url_to_file(image_url: str, id: str, platform: str) -> Optional[Path]:
         f.write(request.content)
 
     return file
-
-def slugify(value): # https://github.com/django/django/blob/main/django/utils/text.py#L452-L469
-    value = (
-        unicodedata.normalize("NFKD", value)
-        .encode("ascii", "ignore")
-        .decode("ascii")
-    )
-
-    value = re.sub(r"[^\w\s-]", "", value.lower())
-    return re.sub(r"[-\s]+", "-", value).strip("-_")
