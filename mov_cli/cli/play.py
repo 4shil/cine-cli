@@ -103,7 +103,7 @@ def play(media: Media, metadata: Metadata, scraper: Scraper, episode: EpisodeSel
         elif option == "select":
             popen.kill()
 
-            episode = handle_episode(None, scraper, metadata, config.fzf_enabled)
+            episode = handle_episode(None, scraper, metadata, config.fzf_enabled, False)
 
             if episode is None:
                 return None
