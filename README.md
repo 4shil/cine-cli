@@ -30,15 +30,31 @@
 </div>
 <br>
 
-> [!WARNING]
-> You may have noticed, development slowing down and halting for a long while.
-> This is because I and the other contributors sadly no longer have the time to take this project to the next level (v4.5).
+> [!Warning]
+> ## mov-cli is in an unmaintained state!
+> This project has been in an unmaintained state for a long while now. I made an announcement on the discord regarding the future of mov-cli a few months ago, now it's time to quote it here on the readme:
+> 
+> ... I don't think I'll be maintaining the mov-cli project anymore (including handling issues) going forward, as I'm extremely occupied with life and other work and projects that are more important to me.
+> Mov-cli was actually never really my project, its founder is [Poseidon444](https://github.com/Poseidon444). The project was later taken by [Ananas](https://github.com/ananasmoe), then I came in far later into the project.
+> 
+> Anyways, we all began contributing less and less to the project as we used it less and less eventually resulting in the development halting and some leaving the project. Now it's just me and the initial founder of the project left 
+> and I really do not have much spare time anymore, and to be completely honest, I also don't have much personal reason to resume with the development of the project **in the current way it is**.
+> 
+> I do have work in progress plans for a potential reboot of mov-cli but that is at the bottom of my priority list and I'll need a team to maintain many parts of it as I want maintenance to be low. As I cannot promise this, it's better to say I will be stepping away from the project than promise a sequel. This doesn't mean the tool will spontaneously combust. Some plugins should still continue to work.
+> 
+> For now, Goodbye! 👋
+> 
+> *~* [*Goldy*](https://github.com/THEGOLDENPRO)
+
+> [!Warning]
+> ~~You may have noticed, development slowing down and halting for a long while.
+> This is because I and the other contributors sadly no longer have the time to take this project to the next level (v4.5).~~
 >
-> This isn't the end, v4.4 may still continue to receive bug fixes here and there, but v4.4 is currently on
+> ~~This isn't the end, v4.4 may still continue to receive bug fixes here and there, but v4.4 is currently on
 > [feature freeze](https://en.wikipedia.org/wiki/Freeze_(software_engineering)), so new features will only be added once [v4.5 development](https://github.com/mov-cli/mov-cli/issues/352) begins again.
-> [v4.5](https://github.com/mov-cli/mov-cli/tree/v4.5) is a rewrite.
+> [v4.5](https://github.com/mov-cli/mov-cli/tree/v4.5) is a rewrite.~~
 >
-> We are hoping we have the time and motivation to return one day, hopefully with more contributors to help this time.
+> ~~We are hoping we have the time and motivation to return one day, hopefully with more contributors to help this time.~~
 
 > [!Note]
 > v4 is constantly changing so be sure to **keep the tool and your plugins up to date**. Also, I would advise not using it as a library yet as the API still has many breaking changes.
