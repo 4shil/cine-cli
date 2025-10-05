@@ -91,7 +91,7 @@
 
 To get running these are all the prerequisites you'll need.
 
-With the prerequisites installed, mov-cli can be installed via the pip command on all platforms with Python version 3.8 or above.
+With the prerequisites installed, mov-cli can be installed via the pip command on all platforms with Python version 3.10 or above.
 
 ```sh
 pip install mov-cli -U
