@@ -173,9 +173,10 @@ class TorrentioScraper(Scraper):
             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
         )
 
-        # Monitor download progress
+        # Monitor download with non-blocking reads
         downloaded_file = None
         start_time = time.time()
+
         while time.time() - start_time < ARIA2C_TIMEOUT:
             if self._download_process.poll() is not None:
                 break
@@ -186,20 +187,21 @@ class TorrentioScraper(Scraper):
                     if f.endswith((".mp4", ".mkv", ".avi", ".webm", ".mov")):
                         fp = os.path.join(root, f)
                         sz = os.path.getsize(fp)
-                        if sz > 10 * 1024 * 1024:  # At least 10MB
+                        if sz > 10 * 1024 * 1024:
                             downloaded_file = fp
                             self.logger.info(f"[download] Found: {f} ({sz/(1024*1024):.0f} MB)")
 
-            # Print progress
-            try:
-                if self._download_process and self._download_process.stdout:
+            # Non-blocking read of aria2c output
+            import select as _select
+            if self._download_process.stdout and _select.select([self._download_process.stdout], [], [], 0)[0]:
+                try:
                     line = self._download_process.stdout.readline()
                     if line:
                         line = line.strip()
-                        if "%" in line or "MB" in line or "download" in line.lower():
-                            self.logger.info(f"[aria2c] {line[:100]}")
-            except Exception:
-                pass
+                        if "%" in line or "MB" in line:
+                            self.logger.info(f"[aria2c] {line[:120]}")
+                except Exception:
+                    pass
 
             time.sleep(2)
 
