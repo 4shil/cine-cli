@@ -38,7 +38,7 @@ TORRENTIO_BASE = "https://torrentio.strem.fun"
 TORRENTIO_CONFIG = "providers=yts,eztv,rarbg,1337x,thepiratebay|qualityfilter=480p,720p,1080p|sort=qualitysize"
 
 DOWNLOAD_DIR = "/tmp/cine-cli-downloads"
-ARIA2C_TIMEOUT = 600  # 10 minutes max download
+ARIA2C_TIMEOUT = 300  # 5 minutes max download
 
 
 class TorrentioScraper(Scraper):
@@ -154,9 +154,18 @@ class TorrentioScraper(Scraper):
         """Download torrent using aria2c. Returns path to downloaded file."""
         os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
+        # Check if file already exists from a previous download
+        for root, dirs, files in os.walk(DOWNLOAD_DIR):
+            for f in files:
+                if f.endswith((".mp4", ".mkv", ".avi", ".webm", ".mov")):
+                    fp = os.path.join(root, f)
+                    sz = os.path.getsize(fp)
+                    if sz > 100 * 1024 * 1024:
+                        self.logger.info(f"[download] Using existing file: {f} ({sz/(1024*1024):.0f} MB)")
+                        return fp
+
         # Clean up old downloads
-        if os.path.exists(DOWNLOAD_DIR):
-            shutil.rmtree(DOWNLOAD_DIR)
+        shutil.rmtree(DOWNLOAD_DIR, ignore_errors=True)
         os.makedirs(DOWNLOAD_DIR)
 
         magnet = (
