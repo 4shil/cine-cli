@@ -30,6 +30,7 @@ __all__ = ("TorrentioScraper",)
 
 import json
 import urllib.request
+import re
 
 TMDB_API_KEY = "1f54bd990f1cdfb230adb312546d765d"
 TMDB_BASE = "https://api.themoviedb.org/3"
@@ -120,13 +121,29 @@ class TorrentioScraper(Scraper):
                     return q
             return ""
 
-        for pool in [direct, torrents]:
-            for s in pool:
-                if quality(s) == prefer_quality:
-                    return s
-        for pool in [direct, torrents]:
-            if pool:
-                return pool[0]
+        def seeders(s):
+            """Extract seeder count from title."""
+            title = s.get("title", "")
+            m = re.search(r"👤\s*(\d+)", title)
+            return int(m.group(1)) if m else 0
+
+        # Sort torrents by seeders (descending), then prefer quality
+        torrents_sorted = sorted(torrents, key=lambda s: (-seeders(s), quality(s) != prefer_quality))
+
+        # Prefer direct URL at preferred quality
+        for s in direct:
+            if quality(s) == prefer_quality:
+                return s
+        if direct:
+            return direct[0]
+
+        # Pick torrent with most seeders at preferred quality
+        for s in torrents_sorted:
+            if quality(s) == prefer_quality:
+                return s
+        if torrents_sorted:
+            return torrents_sorted[0]
+
         return None
 
     # ------------------------------------------------------------------ #
