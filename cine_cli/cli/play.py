@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING, Type, cast
 import subprocess
+import time
 
 if TYPE_CHECKING:
     from typing import Optional, Literal
@@ -119,13 +120,47 @@ def play(media: Media, metadata: Metadata, scraper: Scraper, episode: EpisodeSel
 
             return play(media, metadata, scraper, episode, config)
 
-    # For torrent streams, don't block forever — the torrent server runs independently
+    # For torrent streams, poll progress and show live stats
     if popen is not None and "127.0.0.1" in media.url:
-        cine_cli_logger.info("Torrent stream started. Player is running independently.")
+        cine_cli_logger.info("Torrent stream started. Showing download progress...")
         try:
-            popen.wait(timeout=300)
+            import urllib.request as _urlreq
+            import json as _json
+            status_url = media.url.rstrip("/") + "/status"
+            start_time = time.time()
+            last_progress = -1
+            while popen.poll() is None:
+                time.sleep(3)
+                try:
+                    r = _urlreq.urlopen(status_url, timeout=2)
+                    s = _json.loads(r.read())
+                    progress = s.get("progress", 0)
+                    dl_rate = s.get("download_rate_kb", 0)
+                    peers = s.get("num_peers", 0)
+                    seeds = s.get("num_seeds", 0)
+                    buffered = s.get("buffered_bytes", 0) // 1024
+                    is_ready = s.get("ready", False)
+                    if progress != last_progress or True:
+                        bar_len = 30
+                        filled = int(bar_len * progress / 100) if progress > 0 else 0
+                        bar = "█" * filled + "░" * (bar_len - filled)
+                        elapsed = int(time.time() - start_time)
+                        status_icon = "▶" if is_ready else "⏳"
+                        print(
+                            f"\r  {status_icon} [{bar}] {progress:5.1f}%  "
+                            f"⬇ {dl_rate} KB/s  "
+                            f"💾 {buffered}KB  "
+                            f"👤 {peers}  🌱 {seeds}  "
+                            f"⏱ {elapsed}s",
+                            end="", flush=True,
+                        )
+                        last_progress = progress
+                except Exception:
+                    pass
+            print()
         except subprocess.TimeoutExpired:
-            cine_cli_logger.info("Player still running after 5 minutes. Detaching...")
+            print()
+            cine_cli_logger.info("Player still running after timeout. Detaching...")
     elif popen is not None:
         popen.wait()
 

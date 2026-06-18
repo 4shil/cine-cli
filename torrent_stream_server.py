@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Torrent-to-HTTP streaming server using libtorrent."""
+"""Torrent-to-HTTP streaming server using libtorrent.
+
+Usage:
+    python3 torrent_stream_server.py <info_hash> [--port 8080] [--file-idx 0]
+"""
 import sys
 import os
 import time
@@ -20,6 +24,16 @@ except ImportError:
 import http.server
 import socketserver
 
+MIN_READY_PROGRESS = 2.0
+MIN_BUFFER_BYTES = 512 * 1024
+
+PUBLIC_TRACKERS = [
+    "udp://tracker.opentrackr.org:1337/announce",
+    "udp://open.stealth.si:80/announce",
+    "udp://tracker.torrent.eu.org:451/announce",
+    "udp://exodus.desync.com:6969/announce",
+]
+
 
 class TorrentStreamer:
     def __init__(self, info_hash_hex, port=8080, file_idx=0, save_path="/tmp/cine-cli-torrents"):
@@ -31,42 +45,44 @@ class TorrentStreamer:
         self.handle = None
         self.ready = threading.Event()
         self.metadata_received = threading.Event()
+        self._download_complete = threading.Event()
         self.file_size = 0
         self.file_offset = 0
         self.piece_length = 0
         self.first_piece = 0
         self.file_piece_count = 0
         self.torrent_name = ""
-        self._download_complete = threading.Event()
+        self.file_path = ""
+        self._buffered_bytes = 0
 
     def start(self):
         os.makedirs(self.save_path, exist_ok=True)
         self.session = lt.session({"listen_interfaces": "0.0.0.0:6881"})
 
-        atp = lt.add_torrent_params()
+        # Build magnet URL with public trackers for better peer discovery
+        magnet = f"magnet:?xt=urn:btih:{self.info_hash_hex}"
+        for tr in PUBLIC_TRACKERS:
+            magnet += f"&tr={tr.replace(':', '%3A').replace('/', '%2F')}"
+
+        atp = lt.parse_magnet_uri(magnet)
         atp.save_path = self.save_path
-        atp.info_hash = lt.sha1_hash(bytes.fromhex(self.info_hash_hex))
         self.handle = self.session.add_torrent(atp)
-        self.handle.set_sequential_download(True)
 
-        logging.info(f"Starting torrent: {self.info_hash_hex}")
-
+        logging.info(f"Starting: {self.info_hash_hex[:16]}...")
         t = threading.Thread(target=self._wait_for_metadata, daemon=True)
         t.start()
 
     def _wait_for_metadata(self):
-        count = 0
-        while not self.handle.has_metadata():
-            time.sleep(0.5)
-            count += 1
-            if count % 10 == 0:
-                s = self.handle.status()
-                logging.info(f"Waiting metadata... peers={s.num_peers}")
-            if count > 120:
-                logging.error("Timeout waiting for metadata")
+        for i in range(120):
+            if self.handle.has_metadata():
+                self.metadata_received.set()
+                self._setup_file()
                 return
-        self.metadata_received.set()
-        self._setup_file()
+            if i % 10 == 0:
+                st = self.handle.status()
+                logging.info(f"Waiting metadata... peers={st.num_peers}")
+            time.sleep(1)
+        logging.error("Timeout waiting for metadata")
 
     def _setup_file(self):
         ti = self.handle.torrent_file()
@@ -82,49 +98,46 @@ class TorrentStreamer:
         self.file_piece_count = last_piece - self.first_piece + 1
         self.torrent_name = ti.name()
 
-        # Build the full file path
         self.file_path = os.path.join(self.save_path, ti.name(), entry.path)
-        # Handle case where file is directly in save_path (single-file torrent)
         if not os.path.exists(self.file_path):
             direct = os.path.join(self.save_path, entry.path)
-            if os.path.exists(direct):
-                self.file_path = direct
-            else:
-                # Try without subdir
-                self.file_path = os.path.join(self.save_path, ti.name())
+            self.file_path = direct if os.path.exists(direct) else os.path.join(self.save_path, ti.name())
 
         logging.info(f"Name: {self.torrent_name}")
-        logging.info(f"File: {entry.path}")
         logging.info(f"Size: {self.file_size / (1024*1024):.1f} MB")
-        logging.info(f"Path: {self.file_path}")
 
-        for i in range(self.first_piece, min(self.first_piece + 30, self.first_piece + self.file_piece_count)):
+        for i in range(self.first_piece, min(self.first_piece + 50, self.first_piece + self.file_piece_count)):
             self.handle.piece_priority(i, 7)
 
         self.ready.set()
-
-        # Monitor download completion
-        t = threading.Thread(target=self._monitor_download, daemon=True)
-        t.start()
+        threading.Thread(target=self._monitor_download, daemon=True).start()
 
     def _monitor_download(self):
         while True:
-            s = self.handle.status()
-            if s.progress >= 1.0:
+            st = self.handle.status()
+            if st.progress >= 1.0:
                 logging.info("Download complete!")
                 self._download_complete.set()
-                break
-            if s.num_peers == 0 and s.num_seeds == 0:
-                time.sleep(2)
-                continue
-            if int(s.progress * 100) % 10 == 0:
-                logging.info(f"Progress: {s.progress*100:.0f}% DL={s.download_rate//1024}KB/s peers={s.num_peers}")
+                return
             time.sleep(2)
+
+    def _calculate_buffered(self):
+        if not self.handle.has_metadata():
+            return 0
+        buffered = 0
+        for i in range(self.first_piece, self.first_piece + self.file_piece_count):
+            if self.handle.have_piece(i):
+                buffered += self.piece_length
+            else:
+                break
+        return min(buffered, self.file_size)
 
     def get_status(self):
         if self.handle is None:
             return {"status": "initializing"}
         s = self.handle.status()
+        buffered = self._calculate_buffered() if self.metadata_received.is_set() else 0
+        ready = s.progress * 100 >= MIN_READY_PROGRESS and buffered >= MIN_BUFFER_BYTES
         return {
             "status": str(s.state),
             "progress": round(s.progress * 100, 1),
@@ -132,23 +145,18 @@ class TorrentStreamer:
             "num_peers": s.num_peers,
             "num_seeds": s.num_seeds,
             "file_size": self.file_size,
+            "buffered_bytes": buffered,
+            "ready": ready,
         }
 
     def read_file_range(self, start, length):
-        """Read a byte range from the torrent file — from disk or from libtorrent."""
         if not self.metadata_received.is_set():
             return None
-
-        # If download is complete, just read from disk
         if self._download_complete.is_set():
             return self._read_from_disk(start, length)
-
-        # For streaming while downloading, try libtorrent read_piece first
-        # Fall back to disk read for completed pieces
         return self._read_from_libtorrent(start, length)
 
     def _read_from_disk(self, start, length):
-        """Read from the downloaded file on disk."""
         try:
             if os.path.exists(self.file_path):
                 with open(self.file_path, "rb") as f:
@@ -159,35 +167,25 @@ class TorrentStreamer:
         return None
 
     def _read_from_libtorrent(self, start, length):
-        """Read from libtorrent's piece cache."""
         piece_length = self.piece_length
         abs_start = self.file_offset + start
         abs_end = abs_start + length
         first_piece = abs_start // piece_length
         last_piece = (abs_end - 1) // piece_length
-
-        result = bytearray()
-        for piece in range(first_piece, last_piece + 1):
-            # Wait for piece to be available
-            max_wait = 30
+        max_wait = 60
+        for piece in range(first_piece, min(last_piece + 1, first_piece + 10)):
             waited = 0.0
             while not self.handle.have_piece(piece) and waited < max_wait:
-                time.sleep(0.2)
-                waited += 0.2
-
+                time.sleep(0.5)
+                waited += 0.5
             if not self.handle.have_piece(piece):
-                # Try reading from disk as fallback
-                disk_data = self._read_from_disk(start, length)
-                if disk_data:
-                    return disk_data
-                return None
-
+                return self._read_from_disk(start, length)
+        result = bytearray()
+        for piece in range(first_piece, last_piece + 1):
             data = self.handle.read_piece(piece)
             if data is None:
                 return None
             result.extend(data)
-
-        # Extract the requested byte range
         piece_start_offset = first_piece * piece_length
         start_in_result = abs_start - piece_start_offset
         end_in_result = start_in_result + length
@@ -201,29 +199,29 @@ class TorrentStreamer:
 class TorrentHTTPHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         streamer = self.server.streamer
-
         if self.path == "/status":
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
-            self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             self.wfile.write(json.dumps(streamer.get_status()).encode())
             return
-
         if not streamer.ready.is_set():
             self.send_response(503)
-            self.send_header("Retry-After", "2")
-            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Retry-After", "3")
             self.end_headers()
             self.wfile.write(b"Waiting for torrent metadata...")
             return
-
+        status = streamer.get_status()
+        if not status.get("ready", False):
+            self.send_response(503)
+            self.send_header("Retry-After", "2")
+            self.end_headers()
+            self.wfile.write(f"Buffering... {status.get('progress', 0):.1f}%".encode())
+            return
         file_size = streamer.file_size
         range_header = self.headers.get("Range", "")
-
         start = 0
         end = file_size - 1
-
         if range_header:
             try:
                 range_val = range_header.replace("bytes=", "")
@@ -232,21 +230,16 @@ class TorrentHTTPHandler(http.server.BaseHTTPRequestHandler):
                 end = int(parts[1]) if parts[1] else file_size - 1
             except (ValueError, IndexError):
                 pass
-
         length = end - start + 1
-
         self.send_response(206 if range_header else 200)
         self.send_header("Content-Type", "video/x-matroska")
         self.send_header("Content-Length", str(length))
         self.send_header("Content-Range", f"bytes {start}-{end}/{file_size}")
         self.send_header("Accept-Ranges", "bytes")
-        self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
-
-        chunk_size = 512 * 1024  # 512KB chunks for smoother streaming
+        chunk_size = 512 * 1024
         remaining = length
         offset = start
-
         while remaining > 0:
             to_read = min(chunk_size, remaining)
             data = streamer.read_file_range(offset, to_read)

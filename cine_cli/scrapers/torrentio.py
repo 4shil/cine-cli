@@ -190,23 +190,35 @@ class TorrentioScraper(Scraper):
         )
         self._torrent_processes.append(proc)
 
-        # Wait for server to be ready (up to 60 seconds)
+        # Wait for server to be ready AND have enough data buffered for playback
         url = f"http://127.0.0.1:{port}"
-        for _ in range(60):
+        for _ in range(120):  # Up to 2 minutes
             try:
                 with urllib.request.urlopen(f"{url}/status", timeout=2) as r:
                     status = json.loads(r.read())
-                    if status.get("status") != "initializing":
-                        self.logger.info(f"[torrent] Server ready: {url} (peers={status.get('num_peers',0)}, progress={status.get('progress',0)}%)")
+                    if status.get("ready", False):
+                        self.logger.info(
+                            f"[torrent] Server ready: {url} "
+                            f"(peers={status.get('num_peers',0)}, "
+                            f"progress={status.get('progress',0)}%, "
+                            f"buffered={status.get('buffered_bytes',0)//1024}KB)"
+                        )
                         return url, proc
+                    else:
+                        progress = status.get("progress", 0)
+                        peers = status.get("num_peers", 0)
+                        buffered = status.get("buffered_bytes", 0) // 1024
+                        self.logger.info(
+                            f"[torrent] Buffering... {progress:.1f}% "
+                            f"({buffered}KB buffered, {peers} peers)"
+                        )
             except Exception:
                 pass
-            # Check if process died
             if proc.poll() is not None:
                 out = proc.stdout.read() if proc.stdout else ""
                 self.logger.error(f"[torrent] Server process died: {out[:500]}")
                 return None
-            time.sleep(1)
+            time.sleep(2)
 
         # If we couldn't confirm readiness, return anyway — it might still work
         self.logger.warning(f"[torrent] Server may not be ready yet: {url}")
