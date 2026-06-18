@@ -38,6 +38,7 @@ TORRENTIO_BASE = "https://torrentio.strem.fun"
 TORRENTIO_CONFIG = "providers=yts,eztv,rarbg,1337x,thepiratebay|qualityfilter=480p,720p,1080p|sort=qualitysize"
 
 DOWNLOAD_DIR = "/tmp/cine-cli-downloads"
+ARIA2C_TIMEOUT = 600  # 10 minutes max download
 
 
 class TorrentioScraper(Scraper):
@@ -183,38 +184,55 @@ class TorrentioScraper(Scraper):
 
         self.logger.info(f"[download] Starting aria2c...")
 
-        # Start aria2c in background (detached)
-        subprocess.Popen(
+        # Run aria2c and wait for completion
+        process = subprocess.Popen(
             cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
         )
 
-        # Wait for metadata and file to appear
-        self.logger.info(f"[download] Waiting for metadata...")
-        for i in range(60):
-            time.sleep(1)
-            # Check if any video file appeared
+        # Monitor download with timeout
+        start_time = time.time()
+        last_progress = ""
+        while time.time() - start_time < ARIA2C_TIMEOUT:
+            if process.poll() is not None:
+                break
+
+            # Check for video file and print progress
             for root, dirs, files in os.walk(DOWNLOAD_DIR):
                 for f in files:
                     if f.endswith((".mp4", ".mkv", ".avi", ".webm", ".mov")):
                         fp = os.path.join(root, f)
                         sz = os.path.getsize(fp)
-                        self.logger.info(f"[download] File: {f} ({sz/(1024*1024):.1f} MB)")
-                        return fp
-            # Check for .aria2 control file (metadata downloaded, starting)
-            for root, dirs, files in os.walk(DOWNLOAD_DIR):
-                for f in files:
-                    if f.endswith(".aria2"):
-                        # Download in progress, return expected path
-                        actual = f.replace(".aria2", "")
-                        if actual:
-                            fp = os.path.join(DOWNLOAD_DIR, actual)
-                            self.logger.info(f"[download] Download started: {actual}")
-                            return fp
+                        progress = f"{sz/(1024*1024):.0f} MB"
+                        if progress != last_progress:
+                            self.logger.info(f"[download] {f}: {progress}")
+                            last_progress = progress
 
-        self.logger.error("[download] Failed to start download")
+            # Non-blocking read of aria2c output
+            import select as _sel
+            if process.stdout and _sel.select([process.stdout], [], [], 0)[0]:
+                try:
+                    line = process.stdout.readline()
+                    if line and ("%" in line or "ETA" in line):
+                        self.logger.info(f"[aria2c] {line.strip()[:100]}")
+                except Exception:
+                    pass
+
+            time.sleep(2)
+
+        # Find the downloaded file
+        for root, dirs, files in os.walk(DOWNLOAD_DIR):
+            for f in files:
+                if f.endswith((".mp4", ".mkv", ".avi", ".webm", ".mov")):
+                    fp = os.path.join(root, f)
+                    sz = os.path.getsize(fp)
+                    if sz > 100 * 1024 * 1024:
+                        self.logger.info(f"[download] Complete: {f} ({sz/(1024*1024):.0f} MB)")
+                        return fp
+
+        self.logger.error("[download] Failed to download file")
         return None
 
     # ------------------------------------------------------------------ #
