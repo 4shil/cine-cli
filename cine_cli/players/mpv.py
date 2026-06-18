@@ -18,18 +18,18 @@ __all__ = ("MPV",)
 
 class MPV(Player):
     def __init__(
-        self, 
-        platform: SUPPORTED_PLATFORMS, 
-        args: Optional[List[str]] = None, 
-        args_override: bool = False, 
-        debug: bool = False, 
-        **kwargs
+        self,
+        platform: SUPPORTED_PLATFORMS,
+        args: Optional[List[str]] = None,
+        args_override: bool = False,
+        debug: bool = False,
+        **kwargs,
     ) -> None:
         super().__init__(
-            platform = platform, 
+            platform = platform,
             args = args,
-            debug = debug, 
-            args_override = args_override
+            debug = debug,
+            args_override = args_override,
         )
 
     @property
@@ -42,13 +42,14 @@ class MPV(Player):
 
         args = [
             f"--force-media-title={media.display_name}",
+            "--no-stdin",
+            "--keep-running",
         ]
 
         if media.referrer is not None:
             args.append(f"--referrer={media.referrer}")
 
         if media.subtitles is not None:
-
             for subtitle in media.subtitles:
                 args.append(f"--sub-file={subtitle}")
 
@@ -83,18 +84,23 @@ class MPV(Player):
 
         elif self.platform == "Linux" or self.platform == "Windows" or self.platform == "Darwin" or self.platform == "FreeBSD":
             default_args = [
-                "mpv", 
+                "mpv",
                 media.url
             ]
 
             if media.audio_url is not None:
                 default_args.append(f"--audio-file={media.audio_url}")
 
+            if self.debug:
+                return subprocess.Popen(
+                    default_args + self._get_args(self.platform, media),
+                )
+
             return subprocess.Popen(
                 default_args + self._get_args(self.platform, media),
                 stdin = subprocess.DEVNULL,
-                stdout = (subprocess.STDOUT if self.debug else subprocess.DEVNULL),
-                stderr = (subprocess.STDOUT if self.debug else subprocess.DEVNULL)
+                stdout = subprocess.DEVNULL,
+                stderr = subprocess.DEVNULL,
             )
 
         return None
