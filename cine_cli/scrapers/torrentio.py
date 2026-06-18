@@ -192,7 +192,7 @@ class TorrentioScraper(Scraper):
 
         # Wait for server to be ready AND have enough data for playback
         url = f"http://127.0.0.1:{port}"
-        min_buffer = 50 * 1024 * 1024  # 50MB minimum buffer before playback
+        min_buffer = 10 * 1024 * 1024  # 10MB minimum buffer before playback
         for _ in range(180):  # Up to 3 minutes
             try:
                 with urllib.request.urlopen(f"{url}/status", timeout=2) as r:

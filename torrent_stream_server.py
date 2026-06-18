@@ -122,28 +122,41 @@ class TorrentStreamer:
 
             time.sleep(2)
 
+    def _find_actual_file(self):
+        """Find the actual downloaded file on disk."""
+        if os.path.exists(self.file_path):
+            return self.file_path
+        # Search for large video files in save_path
+        for root, dirs, files in os.walk(self.save_path):
+            for f in files:
+                if f.endswith((".mp4", ".mkv", ".avi", ".webm", ".mov")):
+                    return os.path.join(root, f)
+        return self.file_path
+
     def get_status(self):
         if self.handle is None:
             return {"status": "initializing"}
         st = self.handle.status()
-        file_exists = os.path.exists(self.file_path) if self.file_path else False
-        file_size_on_disk = os.path.getsize(self.file_path) if file_exists else 0
+        actual_file = self._find_actual_file()
+        file_on_disk = os.path.getsize(actual_file) if os.path.exists(actual_file) else 0
+        ready = file_on_disk > (10 * 1024 * 1024)  # 10MB ready threshold
         return {
             "status": str(st.state),
             "progress": round(st.progress * 100, 1),
             "download_rate_kb": st.download_rate // 1024,
             "num_peers": st.num_peers,
             "num_seeds": st.num_seeds,
-            "file_size": self.file_size,
-            "file_on_disk": file_size_on_disk,
-            "ready": file_size_on_disk > 0,
+            "file_size": st.total_wanted if hasattr(st, 'total_wanted') else self.file_size,
+            "file_on_disk": file_on_disk,
+            "ready": ready,
         }
 
     def read_file_range(self, start, length):
         """Read from the downloaded file on disk."""
+        actual_file = self._find_actual_file()
         try:
-            if os.path.exists(self.file_path):
-                with open(self.file_path, "rb") as f:
+            if os.path.exists(actual_file):
+                with open(actual_file, "rb") as f:
                     f.seek(start)
                     return f.read(length)
         except Exception as e:
