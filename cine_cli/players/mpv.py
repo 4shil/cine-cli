@@ -7,6 +7,7 @@ if TYPE_CHECKING:
     from ..media import Media
     from ..utils.platform import SUPPORTED_PLATFORMS, Literal
 
+import os
 import subprocess
 from devgoldyutils import Colours
 
@@ -96,11 +97,16 @@ class MPV(Player):
                     default_args + self._get_args(self.platform, media),
                 )
 
+            # Replicate ani-cli's: nohup mpv ... >/dev/null 2>&1 &
+            # os.setsid() creates a new session, fully detaching from the terminal.
+            # This prevents "inappropriate ioctl for device" (ENOTTY) errors
+            # when running inside GUI terminals that aren't real PTYs.
             return subprocess.Popen(
                 default_args + self._get_args(self.platform, media),
                 stdin = subprocess.DEVNULL,
                 stdout = subprocess.DEVNULL,
                 stderr = subprocess.DEVNULL,
+                start_new_session = True,
             )
 
         return None
