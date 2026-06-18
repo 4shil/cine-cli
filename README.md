@@ -88,6 +88,13 @@ With the prerequisites installed, cine-cli can be installed via the pip command 
 ```sh
 pip install cine-cli -U
 ```
+
+Or use the animated install script:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/4shil/cine-cli/main/install.sh | bash
+```
+
 > Check out the [wiki on installation](https://github.com/cine-cli/cine-cli/wiki/Installation) for more in-depth guidance on installing cine-cli.
 
 ## Usage 🖱️
@@ -96,26 +103,25 @@ pip install cine-cli -U
 cine-cli comes packaged with a CLI interface via the `cine-cli` command you can use in your respective terminal. 
 
 > [!NOTE]
-> You may notice cine-cli doesn't ship with any scrapers (or previously known as providers) by default, this is because v4 is plugin-based and scrapers are now part of plugins that must be chosen to be installed.
-> Find out how to do so at the [wiki](https://github.com/cine-cli/cine-cli/wiki#plugins).
+> cine-cli ships with a **built-in TMDB + vidsrc scraper** as the default — no plugins required for basic movie/TV streaming. Just run `cine-cli "Inception"` and it works.
 
-1. Install the plugin of your choice. Visit this [wiki page](https://github.com/cine-cli/cine-cli/wiki/Plugins) on how to do so and the [cine-cli-plugin](https://github.com/topics/cine-cli-plugin) topic for a list of **third-party** cine-cli plugins.
+1. Start watching right away:
+```sh
+cine-cli "Inception"
+```
+
+2. (Optional) Install additional plugins for more sources. Visit the [wiki](https://github.com/cine-cli/cine-cli/wiki/Plugins) and the [cine-cli-plugin](https://github.com/topics/cine-cli-plugin) topic for a list of **third-party** cine-cli plugins.
 ```sh
 pip install cine-cli-youtube
 ```
-> This is just an example.
-> If you are struggling, visit that [wiki page](https://github.com/cine-cli/cine-cli/wiki/Plugins).
-
-2. Add the plugin to your config.
+Then add to config:
 ```sh
 cine-cli -e
 ```
-Alternatively, you may also edit by manually opening the config file. See this [Wiki page](https://github.com/cine-cli/cine-cli/wiki/Configuration#introduction) on that.  
 ```toml
 [cine-cli.plugins]
 youtube = "cine-cli-youtube"
 ```
-> Check out the [wiki](https://github.com/cine-cli/cine-cli/wiki/Plugins) for more in-depth explanation.
 
 3. Scrape away!
 ```sh
