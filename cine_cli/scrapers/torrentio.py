@@ -190,38 +190,18 @@ class TorrentioScraper(Scraper):
         )
         self._torrent_processes.append(proc)
 
-        # Wait for server to be ready AND have enough data for playback
+        # Wait for server to be ready (file exists on disk)
         url = f"http://127.0.0.1:{port}"
-        min_buffer = 10 * 1024 * 1024  # 10MB minimum buffer before playback
-        for _ in range(180):  # Up to 3 minutes
+        for _ in range(180):
             try:
                 with urllib.request.urlopen(f"{url}/status", timeout=2) as r:
                     status = json.loads(r.read())
-                    file_on_disk = status.get("file_on_disk", 0)
-                    progress = status.get("progress", 0)
-                    peers = status.get("num_peers", 0)
-                    dl_rate = status.get("download_rate_kb", 0)
-
-                    if file_on_disk >= min_buffer or progress >= 95:
-                        self.logger.info(
-                            f"[torrent] Ready: {url} "
-                            f"(progress={progress:.1f}%, "
-                            f"on_disk={file_on_disk//(1024*1024)}MB, "
-                            f"peers={peers}, "
-                            f"dl={dl_rate}KB/s)"
-                        )
+                    if status.get("ready", False):
+                        self.logger.info(f"[torrent] Ready: {url}")
                         return url, proc
-                    else:
-                        self.logger.info(
-                            f"[torrent] Downloading... {progress:.1f}% "
-                            f"({file_on_disk//(1024*1024)}MB on disk, "
-                            f"{peers} peers, {dl_rate}KB/s)"
-                        )
             except Exception:
                 pass
             if proc.poll() is not None:
-                out = proc.stdout.read() if proc.stdout else ""
-                self.logger.error(f"[torrent] Server process died: {out[:500]}")
                 return None
             time.sleep(2)
 
