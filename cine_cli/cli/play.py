@@ -1,5 +1,6 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING, Type, cast
+import subprocess
 
 if TYPE_CHECKING:
     from typing import Optional, Literal
@@ -65,14 +66,14 @@ def play(media: Media, metadata: Metadata, scraper: Scraper, episode: EpisodeSel
     except FileNotFoundError as e:
         cine_cli_logger.error(
             f"The player '{chosen_player.display_name}' was not found! " \
-                f"Are you sure you have it installed? Are you sure it's in path? \nError: {e}"
+                f"Are you sure you have it installed? Are you sure it's in path? \\nError: {e}"
         )
         return None
 
     if popen is None and platform != "iOS":
         cine_cli_logger.error(
             f"The player '{chosen_player.display_name}' is not supported on this platform ({platform}). " \
-            "We recommend VLC for iOS, IINA for MacOS and MPV for every other platform."
+                "We recommend VLC for iOS, IINA for MacOS and MPV for every other platform."
         )
 
         return None
@@ -118,7 +119,15 @@ def play(media: Media, metadata: Metadata, scraper: Scraper, episode: EpisodeSel
 
             return play(media, metadata, scraper, episode, config)
 
-    popen.wait()
+    # For torrent streams, don't block forever — the torrent server runs independently
+    if popen is not None and "127.0.0.1" in media.url:
+        cine_cli_logger.info("Torrent stream started. Player is running independently.")
+        try:
+            popen.wait(timeout=300)
+        except subprocess.TimeoutExpired:
+            cine_cli_logger.info("Player still running after 5 minutes. Detaching...")
+    elif popen is not None:
+        popen.wait()
 
     return None
 

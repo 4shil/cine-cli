@@ -12,6 +12,7 @@ __version__ = "4.4.20"
 # --------------------------------------------------------------------------- #
 from .plugins import PluginHookData
 from .scrapers.tmdb import TmdbScraper as _TmdbScraper
+from .scrapers.torrentio import TorrentioScraper as _TorrentioScraper
 
 plugin: PluginHookData = {
     "version": 1,
@@ -19,5 +20,6 @@ plugin: PluginHookData = {
     "scrapers": {
         "DEFAULT": _TmdbScraper,
         "tmdb": _TmdbScraper,
+        "torrentio": _TorrentioScraper,
     },
 }

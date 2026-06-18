@@ -46,7 +46,10 @@ cine_cli/players/mpv.py
 cine_cli/players/player.py
 cine_cli/players/syncplay.py
 cine_cli/players/vlc.py
+cine_cli/resolvers/__init__.py
+cine_cli/resolvers/torrentio.py
 cine_cli/scrapers/tmdb.py
+cine_cli/scrapers/torrentio.py
 cine_cli/utils/__init__.py
 cine_cli/utils/episode_selector.py
 cine_cli/utils/ip.py
