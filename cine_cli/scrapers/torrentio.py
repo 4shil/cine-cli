@@ -1,11 +1,20 @@
-"""Torrentio scraper — uses Torrentio for stream resolution + local torrent-to-HTTP streaming."""
+"""Torrentio scraper — uses Torrentio for stream resolution + aria2c for download.
+
+Flow:
+1. Search TMDB for metadata
+2. Query Torrentio for streams using IMDb ID
+3. Pick best stream (prefer direct URL, fallback to torrent)
+4. If torrent: download with aria2c
+5. Open downloaded file in player (MPV/VLC/browser)
+"""
 from __future__ import annotations
 
 import os
 import subprocess
 import time
 import signal
-import socket
+import shutil
+import urllib.parse
 from typing import TYPE_CHECKING, Dict, Iterable, Optional
 
 from cine_cli import Scraper, Metadata, MetadataType, Multi, Single
@@ -27,30 +36,12 @@ TMDB_BASE = "https://api.themoviedb.org/3"
 TORRENTIO_BASE = "https://torrentio.strem.fun"
 TORRENTIO_CONFIG = "providers=yts,eztv,rarbg,1337x,thepiratebay|qualityfilter=480p,720p,1080p|sort=qualitysize"
 
-# Port range for torrent HTTP servers
-TORRENT_PORT_START = 18080
-TORRENT_PORT_END = 18099
-
-
-def _find_free_port() -> int:
-    """Find a free port in the torrent port range."""
-    for port in range(TORRENT_PORT_START, TORRENT_PORT_END + 1):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            if s.connect_ex(("127.0.0.1", port)) != 0:
-                return port
-    return TORRENT_PORT_START
+DOWNLOAD_DIR = "/tmp/cine-cli-downloads"
+ARIA2C_TIMEOUT = 600  # 10 minutes max download
 
 
 class TorrentioScraper(Scraper):
-    """Searches via TMDB, resolves streams via Torrentio, serves via local HTTP.
-
-    Flow:
-    1. Search TMDB for metadata (same as TmdbScraper)
-    2. Query Torrentio for streams using IMDb ID
-    3. Pick best stream (prefer direct URL, fallback to torrent)
-    4. If torrent: start local torrent-to-HTTP server
-    5. Return Single/Multi with localhost URL for MPV/VLC
-    """
+    """Searches via TMDB, resolves streams via Torrentio, downloads with aria2c."""
 
     def __init__(
         self,
@@ -61,19 +52,17 @@ class TorrentioScraper(Scraper):
         super().__init__(config, http_client, options)
         self.tmdb_key = str(self.options.get("api_key", TMDB_API_KEY))
         self.torrentio_config = str(self.options.get("torrentio_config", TORRENTIO_CONFIG))
-        self.save_path = str(self.options.get("save_path", "/tmp/cine-cli-torrents"))
-        self._torrent_processes: list[subprocess.Popen] = []
+        self._download_process: Optional[subprocess.Popen] = None
 
     def __del__(self):
-        """Clean up torrent processes on exit."""
-        for p in self._torrent_processes:
+        if self._download_process:
             try:
-                p.terminate()
+                self._download_process.terminate()
             except Exception:
                 pass
 
     # ------------------------------------------------------------------ #
-    #  TMDB API helpers (same as TmdbScraper)
+    #  TMDB API helpers
     # ------------------------------------------------------------------ #
 
     def _tmdb_get(self, path: str, params: dict) -> dict:
@@ -107,7 +96,6 @@ class TorrentioScraper(Scraper):
     # ------------------------------------------------------------------ #
 
     def _torrentio_query(self, media_type: str, imdb_id: str) -> list[dict]:
-        """Query Torrentio for streams."""
         url = f"{TORRENTIO_BASE}/{self.torrentio_config}/stream/{media_type}/{imdb_id}.json"
         self.logger.debug(f"[torrentio] Querying: {url[:120]}...")
         try:
@@ -120,10 +108,8 @@ class TorrentioScraper(Scraper):
             return []
 
     def _pick_stream(self, streams: list[dict], prefer_quality: str = "1080p") -> Optional[dict]:
-        """Pick best stream. Prefer direct URLs, then torrents at preferred quality."""
         if not streams:
             return None
-
         direct = [s for s in streams if s.get("url")]
         torrents = [s for s in streams if s.get("infoHash")]
 
@@ -134,80 +120,105 @@ class TorrentioScraper(Scraper):
                     return q
             return ""
 
-        # Prefer direct URL at preferred quality
-        for s in direct:
-            if quality(s) == prefer_quality:
-                return s
-        if direct:
-            return direct[0]
-
-        # Then torrent at preferred quality
-        for s in torrents:
-            if quality(s) == prefer_quality:
-                return s
-        if torrents:
-            return torrents[0]
-
+        for pool in [direct, torrents]:
+            for s in pool:
+                if quality(s) == prefer_quality:
+                    return s
+        for pool in [direct, torrents]:
+            if pool:
+                return pool[0]
         return None
 
     # ------------------------------------------------------------------ #
-    #  Torrent-to-HTTP streaming
+    #  Download with aria2c
     # ------------------------------------------------------------------ #
 
-    def _start_torrent_stream(self, info_hash: str, file_idx: int = 0) -> tuple[str, subprocess.Popen] | None:
-        """Start a torrent-to-HTTP server. Returns (url, process)."""
-        port = _find_free_port()
-        # Use the standalone torrent stream server script
-        torrent_script = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)),
-            "..", "..", "torrent_stream_server.py"
-        )
-        torrent_script = os.path.normpath(torrent_script)
+    def _download_torrent(self, info_hash: str, title: str) -> Optional[str]:
+        """Download torrent using aria2c. Returns path to downloaded file."""
+        os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
-        if not os.path.exists(torrent_script):
-            # Fallback: try common locations
-            for fallback in [
-                "/home/ashil/Coding/cine-cli/torrent_stream_server.py",
-                os.path.expanduser("~/.local/bin/torrent_stream_server.py"),
-            ]:
-                if os.path.exists(fallback):
-                    torrent_script = fallback
-                    break
+        # Clean up old downloads
+        if os.path.exists(DOWNLOAD_DIR):
+            shutil.rmtree(DOWNLOAD_DIR)
+        os.makedirs(DOWNLOAD_DIR)
+
+        magnet = (
+            f"magnet:?xt=urn:btih:{info_hash}"
+            f"&dn={urllib.parse.quote(title)}"
+            "&tr=udp://tracker.opentrackr.org:1337/announce"
+            "&tr=udp://open.stealth.si:80/announce"
+            "&tr=udp://tracker.torrent.eu.org:451/announce"
+            "&tr=udp://exodus.desync.com:6969/announce"
+        )
 
         cmd = [
-            "python3", torrent_script,
-            info_hash,
-            "--port", str(port),
-            "--file-idx", str(file_idx),
+            "aria2c",
+            "--dir", DOWNLOAD_DIR,
+            "--seed-time=0",
+            "--bt-stop-timeout=300",
+            "--max-connection-per-server=16",
+            "--min-split-size=1M",
+            "--split=16",
+            "--max-overall-download-limit=0",
+            "--continue=true",
+            "--file-allocation=none",
+            "--summary-interval=5",
+            "--console-log-level=notice",
+            "--quiet=false",
+            magnet,
         ]
 
-        self.logger.debug(f"[torrent] Starting: {' '.join(cmd)}")
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
+        self.logger.info(f"[download] Starting aria2c download...")
+        self._download_process = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
         )
-        self._torrent_processes.append(proc)
 
-        # Wait for server to be ready (file exists on disk)
-        url = f"http://127.0.0.1:{port}"
-        for _ in range(180):
+        # Monitor download progress
+        downloaded_file = None
+        start_time = time.time()
+        while time.time() - start_time < ARIA2C_TIMEOUT:
+            if self._download_process.poll() is not None:
+                break
+
+            # Check for completed video files
+            for root, dirs, files in os.walk(DOWNLOAD_DIR):
+                for f in files:
+                    if f.endswith((".mp4", ".mkv", ".avi", ".webm", ".mov")):
+                        fp = os.path.join(root, f)
+                        sz = os.path.getsize(fp)
+                        if sz > 10 * 1024 * 1024:  # At least 10MB
+                            downloaded_file = fp
+                            self.logger.info(f"[download] Found: {f} ({sz/(1024*1024):.0f} MB)")
+
+            # Print progress
             try:
-                with urllib.request.urlopen(f"{url}/status", timeout=2) as r:
-                    status = json.loads(r.read())
-                    if status.get("ready", False):
-                        self.logger.info(f"[torrent] Ready: {url}")
-                        return url, proc
+                if self._download_process and self._download_process.stdout:
+                    line = self._download_process.stdout.readline()
+                    if line:
+                        line = line.strip()
+                        if "%" in line or "MB" in line or "download" in line.lower():
+                            self.logger.info(f"[aria2c] {line[:100]}")
             except Exception:
                 pass
-            if proc.poll() is not None:
-                return None
+
             time.sleep(2)
 
-        # If we couldn't confirm readiness, return anyway — it might still work
-        self.logger.warning(f"[torrent] Server may not be ready yet: {url}")
-        return url, proc
+        # Check if download completed
+        if downloaded_file and os.path.exists(downloaded_file):
+            self.logger.info(f"[download] Complete: {downloaded_file}")
+            return downloaded_file
+
+        # Check for any video file
+        for root, dirs, files in os.walk(DOWNLOAD_DIR):
+            for f in files:
+                if f.endswith((".mp4", ".mkv", ".avi", ".webm", ".mov")):
+                    fp = os.path.join(root, f)
+                    sz = os.path.getsize(fp)
+                    if sz > 1024 * 1024:  # At least 1MB
+                        return fp
+
+        self.logger.error("[download] Failed to download file")
+        return None
 
     # ------------------------------------------------------------------ #
     #  Scraper interface
@@ -274,20 +285,14 @@ class TorrentioScraper(Scraper):
                 return None
 
             if stream.get("url"):
-                return Multi(
-                    url=stream["url"], title=metadata.title,
-                    referrer=None, episode=episode, subtitles=None,
-                )
+                return Multi(url=stream["url"], title=metadata.title,
+                             referrer=None, episode=episode, subtitles=None)
 
             if stream.get("infoHash"):
-                result = self._start_torrent_stream(stream["infoHash"], stream.get("fileIdx", 0))
-                if result is None:
-                    return None
-                url, _ = result
-                return Multi(
-                    url=url, title=metadata.title,
-                    referrer=None, episode=episode, subtitles=None,
-                )
+                file_path = self._download_torrent(stream["infoHash"], metadata.title)
+                if file_path:
+                    return Multi(url=f"file://{file_path}", title=metadata.title,
+                                 referrer=None, episode=episode, subtitles=None)
             return None
 
         # Movie
@@ -307,23 +312,16 @@ class TorrentioScraper(Scraper):
 
         # Direct URL (debrid)
         if stream.get("url"):
-            return Single(
-                url=stream["url"], title=metadata.title,
-                referrer=None, year=metadata.year,
-            )
+            return Single(url=stream["url"], title=metadata.title,
+                          referrer=None, year=metadata.year)
 
-        # Torrent — start local HTTP server
+        # Torrent → download → play local file
         if stream.get("infoHash"):
-            self.logger.info(f"[torrentio] Starting torrent stream: {stream.get('name', 'unknown')}")
-            result = self._start_torrent_stream(stream["infoHash"], stream.get("fileIdx", 0))
-            if result is None:
-                self.logger.error("[torrentio] Failed to start torrent server")
-                return None
-            url, _ = result
-            return Single(
-                url=url, title=metadata.title,
-                referrer=None, year=metadata.year,
-            )
+            self.logger.info(f"[torrentio] Downloading torrent...")
+            file_path = self._download_torrent(stream["infoHash"], metadata.title)
+            if file_path:
+                return Single(url=f"file://{file_path}", title=metadata.title,
+                              referrer=None, year=metadata.year)
 
         return None
 
