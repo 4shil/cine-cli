@@ -39,6 +39,7 @@ cine_cli/media/media.py
 cine_cli/media/metadata.py
 cine_cli/media/quality.py
 cine_cli/players/__init__.py
+cine_cli/players/browser.py
 cine_cli/players/custom_player.py
 cine_cli/players/iina.py
 cine_cli/players/mpv.py

@@ -8,6 +8,7 @@ from .player import *
 
 from .mpv import *
 from .vlc import *
+from .browser import *
 from .iina import *
 from .syncplay import *
 from .custom_player import *
@@ -15,6 +16,7 @@ from .custom_player import *
 PLAYER_TABLE: Dict[str, Type[Player]] = {
     "mpv": MPV, 
     "vlc": VLC, 
+    "browser": Browser,
     "syncplay": SyncPlay, 
     "iina": IINA
 }
