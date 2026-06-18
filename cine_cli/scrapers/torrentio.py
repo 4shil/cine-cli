@@ -4,17 +4,16 @@ Flow:
 1. Search TMDB for metadata
 2. Query Torrentio for streams using IMDb ID
 3. Pick best stream (prefer direct URL, fallback to torrent)
-4. If torrent: download with aria2c
-5. Open downloaded file in player (MPV/VLC/browser)
+4. If torrent: start aria2c download in background
+5. Return file:// URI to expected download path
 """
 from __future__ import annotations
 
 import os
 import subprocess
 import time
-import signal
 import shutil
-import urllib.parse
+import re
 from typing import TYPE_CHECKING, Dict, Iterable, Optional
 
 from cine_cli import Scraper, Metadata, MetadataType, Multi, Single
@@ -30,6 +29,7 @@ __all__ = ("TorrentioScraper",)
 
 import json
 import urllib.request
+import urllib.parse
 import re
 
 TMDB_API_KEY = "1f54bd990f1cdfb230adb312546d765d"
@@ -38,7 +38,6 @@ TORRENTIO_BASE = "https://torrentio.strem.fun"
 TORRENTIO_CONFIG = "providers=yts,eztv,rarbg,1337x,thepiratebay|qualityfilter=480p,720p,1080p|sort=qualitysize"
 
 DOWNLOAD_DIR = "/tmp/cine-cli-downloads"
-ARIA2C_TIMEOUT = 300  # 5 minutes max download
 
 
 class TorrentioScraper(Scraper):
@@ -53,14 +52,6 @@ class TorrentioScraper(Scraper):
         super().__init__(config, http_client, options)
         self.tmdb_key = str(self.options.get("api_key", TMDB_API_KEY))
         self.torrentio_config = str(self.options.get("torrentio_config", TORRENTIO_CONFIG))
-        self._download_process: Optional[subprocess.Popen] = None
-
-    def __del__(self):
-        if self._download_process:
-            try:
-                self._download_process.terminate()
-            except Exception:
-                pass
 
     # ------------------------------------------------------------------ #
     #  TMDB API helpers
@@ -122,22 +113,18 @@ class TorrentioScraper(Scraper):
             return ""
 
         def seeders(s):
-            """Extract seeder count from title."""
             title = s.get("title", "")
             m = re.search(r"👤\s*(\d+)", title)
             return int(m.group(1)) if m else 0
 
-        # Sort torrents by seeders (descending), then prefer quality
         torrents_sorted = sorted(torrents, key=lambda s: (-seeders(s), quality(s) != prefer_quality))
 
-        # Prefer direct URL at preferred quality
         for s in direct:
             if quality(s) == prefer_quality:
                 return s
         if direct:
             return direct[0]
 
-        # Pick torrent with most seeders at preferred quality
         for s in torrents_sorted:
             if quality(s) == prefer_quality:
                 return s
@@ -150,18 +137,18 @@ class TorrentioScraper(Scraper):
     #  Download with aria2c
     # ------------------------------------------------------------------ #
 
-    def _download_torrent(self, info_hash: str, title: str) -> Optional[str]:
-        """Download torrent using aria2c. Returns path to downloaded file."""
+    def _start_download(self, info_hash: str, title: str) -> Optional[str]:
+        """Start aria2c download in background. Returns expected file path."""
         os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
-        # Check if file already exists from a previous download
+        # Check if file already exists
         for root, dirs, files in os.walk(DOWNLOAD_DIR):
             for f in files:
                 if f.endswith((".mp4", ".mkv", ".avi", ".webm", ".mov")):
                     fp = os.path.join(root, f)
                     sz = os.path.getsize(fp)
                     if sz > 100 * 1024 * 1024:
-                        self.logger.info(f"[download] Using existing file: {f} ({sz/(1024*1024):.0f} MB)")
+                        self.logger.info(f"[download] Using existing: {f} ({sz/(1024*1024):.0f} MB)")
                         return fp
 
         # Clean up old downloads
@@ -181,71 +168,53 @@ class TorrentioScraper(Scraper):
             "aria2c",
             "--dir", DOWNLOAD_DIR,
             "--seed-time=0",
-            "--bt-stop-timeout=300",
+            "--bt-stop-timeout=600",
             "--max-connection-per-server=16",
             "--min-split-size=1M",
             "--split=16",
             "--max-overall-download-limit=0",
             "--continue=true",
             "--file-allocation=none",
-            "--summary-interval=5",
+            "--summary-interval=10",
             "--console-log-level=notice",
-            "--quiet=false",
+            "--quiet=true",
             magnet,
         ]
 
-        self.logger.info(f"[download] Starting aria2c download...")
-        self._download_process = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+        self.logger.info(f"[download] Starting aria2c...")
+
+        # Start aria2c in background (detached)
+        subprocess.Popen(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
         )
 
-        # Monitor download with non-blocking reads
-        downloaded_file = None
-        start_time = time.time()
-
-        while time.time() - start_time < ARIA2C_TIMEOUT:
-            if self._download_process.poll() is not None:
-                break
-
-            # Check for completed video files
+        # Wait for metadata and file to appear
+        self.logger.info(f"[download] Waiting for metadata...")
+        for i in range(60):
+            time.sleep(1)
+            # Check if any video file appeared
             for root, dirs, files in os.walk(DOWNLOAD_DIR):
                 for f in files:
                     if f.endswith((".mp4", ".mkv", ".avi", ".webm", ".mov")):
                         fp = os.path.join(root, f)
                         sz = os.path.getsize(fp)
-                        if sz > 10 * 1024 * 1024:
-                            downloaded_file = fp
-                            self.logger.info(f"[download] Found: {f} ({sz/(1024*1024):.0f} MB)")
-
-            # Non-blocking read of aria2c output
-            import select as _select
-            if self._download_process.stdout and _select.select([self._download_process.stdout], [], [], 0)[0]:
-                try:
-                    line = self._download_process.stdout.readline()
-                    if line:
-                        line = line.strip()
-                        if "%" in line or "MB" in line:
-                            self.logger.info(f"[aria2c] {line[:120]}")
-                except Exception:
-                    pass
-
-            time.sleep(2)
-
-        # Check if download completed
-        if downloaded_file and os.path.exists(downloaded_file):
-            self.logger.info(f"[download] Complete: {downloaded_file}")
-            return downloaded_file
-
-        # Check for any video file
-        for root, dirs, files in os.walk(DOWNLOAD_DIR):
-            for f in files:
-                if f.endswith((".mp4", ".mkv", ".avi", ".webm", ".mov")):
-                    fp = os.path.join(root, f)
-                    sz = os.path.getsize(fp)
-                    if sz > 1024 * 1024:  # At least 1MB
+                        self.logger.info(f"[download] File: {f} ({sz/(1024*1024):.1f} MB)")
                         return fp
+            # Check for .aria2 control file (metadata downloaded, starting)
+            for root, dirs, files in os.walk(DOWNLOAD_DIR):
+                for f in files:
+                    if f.endswith(".aria2"):
+                        # Download in progress, return expected path
+                        actual = f.replace(".aria2", "")
+                        if actual:
+                            fp = os.path.join(DOWNLOAD_DIR, actual)
+                            self.logger.info(f"[download] Download started: {actual}")
+                            return fp
 
-        self.logger.error("[download] Failed to download file")
+        self.logger.error("[download] Failed to start download")
         return None
 
     # ------------------------------------------------------------------ #
@@ -253,8 +222,8 @@ class TorrentioScraper(Scraper):
     # ------------------------------------------------------------------ #
 
     def search(self, query: str, limit: Optional[int] = None) -> Iterable[Metadata]:
-        import urllib.parse
-        encoded = urllib.parse.quote(query)
+        import urllib.parse as _up
+        encoded = _up.quote(query)
 
         movies = self._search_movie(encoded)
         tv_shows = self._search_tv(encoded)
@@ -317,7 +286,7 @@ class TorrentioScraper(Scraper):
                              referrer=None, episode=episode, subtitles=None)
 
             if stream.get("infoHash"):
-                file_path = self._download_torrent(stream["infoHash"], metadata.title)
+                file_path = self._start_download(stream["infoHash"], metadata.title)
                 if file_path:
                     return Multi(url=f"file://{file_path}", title=metadata.title,
                                  referrer=None, episode=episode, subtitles=None)
@@ -345,8 +314,8 @@ class TorrentioScraper(Scraper):
 
         # Torrent → download → play local file
         if stream.get("infoHash"):
-            self.logger.info(f"[torrentio] Downloading torrent...")
-            file_path = self._download_torrent(stream["infoHash"], metadata.title)
+            self.logger.info(f"[torrentio] Starting download...")
+            file_path = self._start_download(stream["infoHash"], metadata.title)
             if file_path:
                 return Single(url=f"file://{file_path}", title=metadata.title,
                               referrer=None, year=metadata.year)
