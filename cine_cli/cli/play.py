@@ -47,14 +47,20 @@ def play(media: Media, metadata: Metadata, scraper: Scraper, episode: EpisodeSel
         if quality is not None:
             quality_string = f"in {Colours.GREEN.apply(quality.name)} "
 
-    cine_cli_logger.info(
-        f"Playing {episode_details_string}'{Colours.BLUE.apply(media.title)}' " \
-            f"{quality_string}with {chosen_player.display_name}..."
-    )
-
     try:
         popen = chosen_player.play(media)
 
+        actual_player = chosen_player.display_name
+        popen_args = popen.args if popen is not None else []
+        if isinstance(popen_args, (list, tuple)) and len(popen_args) > 0:
+            command = str(popen_args[0])
+            if command.endswith("xdg-open") or "zen-browser" in command or "firefox" in command or "brave" in command:
+                actual_player = Colours.PURPLE.apply("Browser")
+
+        cine_cli_logger.info(
+            f"Playing {episode_details_string}'{Colours.BLUE.apply(media.title)}' " \
+                f"{quality_string}with {actual_player}..."
+        )
         cine_cli_logger.debug(f"Called player with these args -> '{hide_ip(' '.join(popen.args), config.hide_ip)}'")
     except FileNotFoundError as e:
         cine_cli_logger.error(
