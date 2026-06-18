@@ -8,11 +8,6 @@
 [![MIT License][license-shield]][license-url]
 
 
-<div align="center">
-
-  <a href="https://github.com/cine-cli/cine-cli">
-    <img src="https://github.com/cine-cli/cine-cli/assets/132799819/a23bec13-881d-41b9-b596-b31c6698b89e" alt="Logo" width="250">
-  </a>
 
   <sub>Watch everything from your terminal.</sub>
   <br>
