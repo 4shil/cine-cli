@@ -190,27 +190,32 @@ class TorrentioScraper(Scraper):
         )
         self._torrent_processes.append(proc)
 
-        # Wait for server to be ready AND have enough data buffered for playback
+        # Wait for server to be ready AND have enough data for playback
         url = f"http://127.0.0.1:{port}"
-        for _ in range(120):  # Up to 2 minutes
+        min_buffer = 50 * 1024 * 1024  # 50MB minimum buffer before playback
+        for _ in range(180):  # Up to 3 minutes
             try:
                 with urllib.request.urlopen(f"{url}/status", timeout=2) as r:
                     status = json.loads(r.read())
-                    if status.get("ready", False):
+                    file_on_disk = status.get("file_on_disk", 0)
+                    progress = status.get("progress", 0)
+                    peers = status.get("num_peers", 0)
+                    dl_rate = status.get("download_rate_kb", 0)
+
+                    if file_on_disk >= min_buffer or progress >= 95:
                         self.logger.info(
-                            f"[torrent] Server ready: {url} "
-                            f"(peers={status.get('num_peers',0)}, "
-                            f"progress={status.get('progress',0)}%, "
-                            f"buffered={status.get('buffered_bytes',0)//1024}KB)"
+                            f"[torrent] Ready: {url} "
+                            f"(progress={progress:.1f}%, "
+                            f"on_disk={file_on_disk//(1024*1024)}MB, "
+                            f"peers={peers}, "
+                            f"dl={dl_rate}KB/s)"
                         )
                         return url, proc
                     else:
-                        progress = status.get("progress", 0)
-                        peers = status.get("num_peers", 0)
-                        buffered = status.get("buffered_bytes", 0) // 1024
                         self.logger.info(
-                            f"[torrent] Buffering... {progress:.1f}% "
-                            f"({buffered}KB buffered, {peers} peers)"
+                            f"[torrent] Downloading... {progress:.1f}% "
+                            f"({file_on_disk//(1024*1024)}MB on disk, "
+                            f"{peers} peers, {dl_rate}KB/s)"
                         )
             except Exception:
                 pass
