@@ -11,7 +11,7 @@ class NoMetadata(BaseModel):
             "examples": [
                 {
                     "error": "NoMetadata",
-                    "message": "mov-cli-youtube didn't return any metadata"
+                    "message": "cine-cli-youtube didn't return any metadata"
                 }
             ]
         }
@@ -26,7 +26,7 @@ class NoVideoToScrape(BaseModel):
             "examples": [
                 {
                     "error": "NoVideoToScrape",
-                    "message": "mov-cli-youtube didn't find any video with that ID to scrape."
+                    "message": "cine-cli-youtube didn't find any video with that ID to scrape."
                 }
             ]
         }

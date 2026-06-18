@@ -1,19 +1,19 @@
-# This is a simple example on how to use mov-cli as a library.
-# This script requires the mov-cli-youtube plugin to be installed!
+# This is a simple example on how to use cine-cli as a library.
+# This script requires the cine-cli-youtube plugin to be installed!
 #
-# pip install mov-cli-youtube -U
+# pip install cine-cli-youtube -U
 
 import time
 
-from mov_cli import prompt
-from mov_cli.config import Config
-from mov_cli.players import PLAYER_TABLE
-from mov_cli.http_client import HTTPClient
-from mov_cli.utils import EpisodeSelector, what_platform
+from cine_cli import prompt
+from cine_cli.config import Config
+from cine_cli.players import PLAYER_TABLE
+from cine_cli.http_client import HTTPClient
+from cine_cli.utils import EpisodeSelector, what_platform
 
-from mov_cli_youtube.yt_dlp import YTDlpScraper
+from cine_cli_youtube.yt_dlp import YTDlpScraper
 
-WELCOME_MESSAGE = "Hello and welcome to my custom mov-cli script!\n\n" \
+WELCOME_MESSAGE = "Hello and welcome to my custom cine-cli script!\n\n" \
     "What would you like to watch from YouTube?\n"
 
 if __name__ == "__main__":

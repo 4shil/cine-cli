@@ -4,7 +4,7 @@
 
 </div>
 
-## This project: mov-cli
+## This project: cine-cli
 The core aim of this project is to correlate automation and efficiency to extract what is provided to a user on the internet.
 
 Think of this project as your browser, which can visit sites like https://youtube.com, making multiple useless/tracking requests. This project is made for easier access to content without its tracking.

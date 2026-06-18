@@ -1,6 +1,6 @@
 ---
 name: Feature Request
-about: Suggest a feature or enhancement for mov-cli.
+about: Suggest a feature or enhancement for cine-cli.
 title: '[FEATURE] '
 labels: enhancement
 assignees: ''

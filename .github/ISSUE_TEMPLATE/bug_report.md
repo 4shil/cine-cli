@@ -1,6 +1,6 @@
 ---
 name: BUG Report
-about: Report a mov-cli bug.
+about: Report a cine-cli bug.
 title: '[BUG] '
 labels: bug
 assignees: ''
@@ -30,8 +30,8 @@ assignees: ''
 <!-- 
 Paste the full terminal output here.
 
-Run mov-cli with the "--debug" flag to retrieve more logs.
-WARNING: This may leak sensitive information such as IPs and potential confidential information stored in the mov-cli config.toml file. BE SURE to remove those details.
+Run cine-cli with the "--debug" flag to retrieve more logs.
+WARNING: This may leak sensitive information such as IPs and potential confidential information stored in the cine-cli config.toml file. BE SURE to remove those details.
 -->
 
 ```python

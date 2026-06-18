@@ -7,7 +7,7 @@ import sys
 sys.path.insert(0, ".")
 
 import typer
-from mov_cli.cli.__main__ import mov_cli
+from cine_cli.cli.__main__ import cine_cli
 
 if __name__ == "__main__":
-    typer.run(mov_cli)
+    typer.run(cine_cli)

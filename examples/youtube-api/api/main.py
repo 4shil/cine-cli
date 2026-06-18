@@ -3,10 +3,10 @@ from typing import List
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
-from mov_cli import Config
-from mov_cli.utils import EpisodeSelector
-from mov_cli.http_client import HTTPClient
-from mov_cli_youtube import YTDlpScraper, PyTubeScraper
+from cine_cli import Config
+from cine_cli.utils import EpisodeSelector
+from cine_cli.http_client import HTTPClient
+from cine_cli_youtube import YTDlpScraper, PyTubeScraper
 
 from . import __version__, errors, models
 
@@ -16,8 +16,8 @@ app = FastAPI(
     version = __version__
 )
 
-mov_cli_conf = Config()
-mov_cli_http = HTTPClient(mov_cli_conf)
+cine_cli_conf = Config()
+cine_cli_http = HTTPClient(cine_cli_conf)
 
 @app.post(
     "/search",
@@ -41,13 +41,13 @@ mov_cli_http = HTTPClient(mov_cli_conf)
         },
         404: {
             "model": errors.NoMetadata, 
-            "description": "No Metadata was returned by mov-cli"
+            "description": "No Metadata was returned by cine-cli"
         }
     },
 )
 async def search(data: models.SearchModel) -> List[models.MetadataModel]:
     scraper = YTDlpScraper(
-        mov_cli_conf, mov_cli_http
+        cine_cli_conf, cine_cli_http
     )
 
     search_results = list(
@@ -62,7 +62,7 @@ async def search(data: models.SearchModel) -> List[models.MetadataModel]:
             status_code = 404, 
             content = {
                 "error": "NoMetadata",
-                "message": "mov-cli-youtube didn't return any metadata"
+                "message": "cine-cli-youtube didn't return any metadata"
             }
         )
 
@@ -101,11 +101,11 @@ async def search(data: models.SearchModel) -> List[models.MetadataModel]:
 async def get_stream(data: models.StreamModel) -> models.StreamResultModel:
     if data.scraper == "yt-dlp":
         scraper = YTDlpScraper(
-            mov_cli_conf, mov_cli_http
+            cine_cli_conf, cine_cli_http
         )
     else:
         scraper = PyTubeScraper(
-            mov_cli_conf, mov_cli_http
+            cine_cli_conf, cine_cli_http
         )
 
     video_metadata = next(scraper.search(data.watch_url), None)
@@ -115,7 +115,7 @@ async def get_stream(data: models.StreamModel) -> models.StreamResultModel:
             status_code = 404, 
             content = {
                 "error": "NoVideoToScrape",
-                "message": "mov-cli-youtube didn't find any video with that ID to scrape."
+                "message": "cine-cli-youtube didn't find any video with that ID to scrape."
             }
         )
 

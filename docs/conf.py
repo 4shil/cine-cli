@@ -11,9 +11,9 @@ sys.path.insert(0, os.path.abspath(".."))
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
-project = "mov-cli"
-copyright = "2024, mov-cli"
-author = "mov-cli"
+project = "cine-cli"
+copyright = "2024, cine-cli"
+author = "cine-cli"
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
@@ -34,7 +34,7 @@ source_suffix = ['.rst', '.md']
 
 # Opengraph Settings
 # -------------------
-ogp_site_url = "https://mov-cli.sata-andagi.moe"
+ogp_site_url = "https://cine-cli.sata-andagi.moe"
 ogp_social_cards = {
     "line_color": "#bf5c00",
     "width": 500
