@@ -24,8 +24,8 @@ except ImportError:
 import http.server
 import socketserver
 
-MIN_READY_PROGRESS = 2.0
-MIN_BUFFER_BYTES = 512 * 1024
+MIN_READY_PROGRESS = 0.5  # Very low threshold — just need metadata + some peers
+MIN_BUFFER_BYTES = 0       # Don't require disk buffer — serve from piece cache
 
 PUBLIC_TRACKERS = [
     "udp://tracker.opentrackr.org:1337/announce",
@@ -122,15 +122,14 @@ class TorrentStreamer:
             time.sleep(2)
 
     def _calculate_buffered(self):
+        """Calculate how many bytes of the file are available in piece cache."""
         if not self.handle.has_metadata():
             return 0
         buffered = 0
         for i in range(self.first_piece, self.first_piece + self.file_piece_count):
             if self.handle.have_piece(i):
-                buffered += self.piece_length
-            else:
-                break
-        return min(buffered, self.file_size)
+                buffered += min(self.piece_length, self.file_size - (i - self.first_piece) * self.piece_length)
+        return buffered
 
     def get_status(self):
         if self.handle is None:
