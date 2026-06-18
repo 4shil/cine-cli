@@ -43,7 +43,7 @@ class MPV(Player):
 
         args = [
             f"--force-media-title={media.display_name}",
-            "--no-stdin",
+            "--input-terminal=no",
             "--keep-running",
         ]
 
@@ -98,7 +98,8 @@ class MPV(Player):
                 )
 
             # Replicate ani-cli's: nohup mpv ... >/dev/null 2>&1 &
-            # os.setsid() creates a new session, fully detaching from the terminal.
+            # start_new_session=True creates a new session, fully detaching from the terminal.
+            # MPV uses --input-terminal=no and --terminal=no so it doesn't try to control stdin/stdout.
             # This prevents "inappropriate ioctl for device" (ENOTTY) errors
             # when running inside GUI terminals that aren't real PTYs.
             return subprocess.Popen(
