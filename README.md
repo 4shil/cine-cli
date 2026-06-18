@@ -23,10 +23,7 @@
 
   <br>
   <br>
-  <a href="https://discord.gg/BMzC7ePsBV">
-    <img src="https://invidget.switchblade.xyz/BMzC7ePsBV" alt="Logo" width="400">
-  </a>
-
+ 
 </div>
 <br>
 
