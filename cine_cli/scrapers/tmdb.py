@@ -61,55 +61,57 @@ class TmdbScraper(Scraper):
     def search(self, query: str, limit: Optional[int] = None) -> Iterable[Metadata]:
         import urllib.parse
         encoded = urllib.parse.quote(query)
-        movies = self._search_movie(encoded)
-        tv_shows = self._search_tv(encoded)
+
+        # Use multi search for mixed results in relevance order
+        try:
+            data = self._tmdb_get("search/multi", {
+                "query": encoded, "page": "1",
+                "language": "en-US", "include_adult": "false",
+            })
+            items = data.get("results", [])
+        except Exception:
+            items = []
+
         results: list[Metadata] = []
 
-        for item in movies:
-            tmdb_id = str(item["id"])
-            title = item.get("title", "Unknown")
-            year = (item.get("release_date", "") or "")[:4]
-            poster = item.get("poster_path", "") or ""
-            image_url = f"https://image.tmdb.org/t/p/w500{poster}" if poster else ""
+        for item in items:
+            tmdb_id = str(item.get("id", ""))
+            if not tmdb_id:
+                continue
 
-            # Get IMDb ID
-            imdb_id = item.get("imdb_id", "")
-            if not imdb_id:
-                ext = self._external_ids(tmdb_id, "movie")
-                imdb_id = ext.get("imdb_id", "")
+            media_type = item.get("media_type", "")
 
-            # Store as imdb:{imdb_id} if available, else tmdb:{tmdb_id}
-            if imdb_id:
-                mid = f"imdb:{imdb_id}"
-            else:
-                mid = f"tmdb:{tmdb_id}"
+            if media_type == "movie":
+                title = item.get("title", "Unknown")
+                year = (item.get("release_date", "") or "")[:4]
+                imdb_id = item.get("imdb_id", "")
 
-            results.append(Metadata(
-                id=mid, title=title, type=MetadataType.SINGLE,
-                image_url=image_url, year=year,
-            ))
+                if not imdb_id:
+                    ext = self._external_ids(tmdb_id, "movie")
+                    imdb_id = ext.get("imdb_id", "")
 
-        for item in tv_shows:
-            tmdb_id = str(item["id"])
-            title = item.get("name", "Unknown")
-            year = (item.get("first_air_date", "") or "")[:4]
-            poster = item.get("poster_path", "") or ""
-            image_url = f"https://image.tmdb.org/t/p/w500{poster}" if poster else ""
+                mid = f"imdb:{imdb_id}" if imdb_id else f"tmdb:{tmdb_id}"
 
-            imdb_id = item.get("imdb_id", "")
-            if not imdb_id:
-                ext = self._external_ids(tmdb_id, "tv")
-                imdb_id = ext.get("imdb_id", "")
+                results.append(Metadata(
+                    id=mid, title=title, type=MetadataType.SINGLE,
+                    year=year,
+                ))
 
-            if imdb_id:
-                mid = f"imdb:{imdb_id}"
-            else:
-                mid = f"tmdb:{tmdb_id}"
+            elif media_type == "tv":
+                title = item.get("name", "Unknown")
+                year = (item.get("first_air_date", "") or "")[:4]
+                imdb_id = item.get("imdb_id", "")
 
-            results.append(Metadata(
-                id=mid, title=title, type=MetadataType.MULTI,
-                image_url=image_url, year=year,
-            ))
+                if not imdb_id:
+                    ext = self._external_ids(tmdb_id, "tv")
+                    imdb_id = ext.get("imdb_id", "")
+
+                mid = f"imdb:{imdb_id}" if imdb_id else f"tmdb:{tmdb_id}"
+
+                results.append(Metadata(
+                    id=mid, title=title, type=MetadataType.MULTI,
+                    year=year,
+                ))
 
         if limit is not None:
             results = results[:limit]
