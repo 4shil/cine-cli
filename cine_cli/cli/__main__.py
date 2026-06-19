@@ -227,13 +227,30 @@ def cine_cli(
             file_name = selected_stream.filename or selected_stream.quality
 
             # Start the web server
-            web_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), '..', 'torrent-web')
-            web_dir = os.path.abspath(web_dir)
+            # Resolve path to torrent-web — works from pipx venv, dev install, or source
+            import cine_cli as _cc
+            _cc_dir = os.path.dirname(os.path.abspath(_cc.__file__))
+            # Try multiple locations
+            _candidates = [
+                os.path.join(_cc_dir, '..', '..', 'torrent-web'),  # pipx venv layout
+                os.path.join(_cc_dir, '..', '..', '..', '..', 'torrent-web'),  # deep venv
+                os.path.join(os.getcwd(), 'torrent-web'),  # cwd
+                os.path.join(os.path.expanduser('~'), 'Coding', 'cine-cli', 'torrent-web'),  # known path
+            ]
+            web_dir = None
+            for _c in _candidates:
+                _c = os.path.abspath(_c)
+                if os.path.exists(os.path.join(_c, 'server.js')):
+                    web_dir = _c
+                    break
+            if web_dir is None:
+                web_dir = os.path.abspath(_candidates[-1])
             server_js = os.path.join(web_dir, 'server.js')
 
             if not os.path.exists(server_js):
                 cine_cli_logger.error(f"Web server not found: {server_js}")
-                cine_cli_logger.error("Run: cd torrent-web && npm install express webtorrent socket.io")
+                cine_cli_logger.error("Make sure torrent-web/ directory exists alongside cine-cli source")
+                cine_cli_logger.error("Then run: cd torrent-web && npm install")
                 raise typer.Exit(1)
 
             cine_cli_logger.info("Starting torrent web server on http://localhost:3737 ...")
