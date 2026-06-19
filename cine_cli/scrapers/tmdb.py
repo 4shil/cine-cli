@@ -1,7 +1,7 @@
-"""Built-in TMDB + Videasy scraper for cine-cli.
+"""TMDB + Multi-Provider scraper for cine-cli.
 
-Uses TMDB for metadata and Videasy for direct .m3u8 stream URLs.
-No browser embeds, no Turnstile — just clean HLS streams.
+Uses TMDB for metadata, multiple providers for streaming.
+Default: browser playback via provider website URLs.
 """
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Dict, Iterable, Optional
 
 from cine_cli import Scraper, Metadata, MetadataType, Multi, Single, MultiSourceMedia
 from cine_cli.utils import EpisodeSelector
-from cine_cli.resolvers.videasy import VideasyResolver
+from cine_cli.resolvers.encdec import MultiProviderResolver, PROVIDERS
 
 if TYPE_CHECKING:
     from cine_cli import Config
@@ -23,17 +23,14 @@ TMDB_BASE = "https://api.themoviedb.org/3"
 
 
 class TmdbScraper(Scraper):
-    """Searches movies and TV shows via TMDB, streams via Videasy."""
+    """Searches via TMDB, streams via multiple providers."""
 
-    def __init__(
-        self,
-        config: Config,
-        http_client: HTTPClient,
-        options: Optional[ScraperOptionsT] = None,
-    ) -> None:
+    def __init__(self, config: Config, http_client: HTTPClient,
+                 options: Optional[ScraperOptionsT] = None) -> None:
         super().__init__(config, http_client, options)
         self.tmdb_key = str(self.options.get("api_key", TMDB_API_KEY))
-        self.videasy = VideasyResolver()
+        self.provider = str(self.options.get("provider", ""))
+        self.encdec = MultiProviderResolver()
 
     def _tmdb_get(self, path: str, params: dict) -> dict:
         params["api_key"] = self.tmdb_key
@@ -55,19 +52,11 @@ class TmdbScraper(Scraper):
         })
         return data.get("results", [])
 
-    def _external_ids(self, tmdb_id: int, media_type: str = "movie") -> dict:
-        try:
-            return self._tmdb_get(f"{media_type}/{tmdb_id}/external_ids", {})
-        except Exception:
-            return {}
-
     def search(self, query: str, limit: Optional[int] = None) -> Iterable[Metadata]:
         import urllib.parse
         encoded = urllib.parse.quote(query)
-
         movies = self._search_movie(encoded)
         tv_shows = self._search_tv(encoded)
-
         results: list[Metadata] = []
 
         for item in movies:
@@ -76,23 +65,10 @@ class TmdbScraper(Scraper):
             year = (item.get("release_date", "") or "")[:4]
             poster = item.get("poster_path", "") or ""
             image_url = f"https://image.tmdb.org/t/p/w500{poster}" if poster else ""
-            imdb_id = item.get("imdb_id", "")
-
-            if not imdb_id:
-                ext = self._external_ids(tmdb_id, "movie")
-                imdb_id = ext.get("imdb_id", "")
-
-            # Store TMDB ID (Videasy needs it), fallback to IMDb
-            if tmdb_id:
-                results.append(Metadata(
-                    id=f"tmdb:{tmdb_id}", title=title, type=MetadataType.SINGLE,
-                    image_url=image_url, year=year,
-                ))
-            elif imdb_id:
-                results.append(Metadata(
-                    id=imdb_id, title=title, type=MetadataType.SINGLE,
-                    image_url=image_url, year=year,
-                ))
+            results.append(Metadata(
+                id=f"tmdb:{tmdb_id}", title=title, type=MetadataType.SINGLE,
+                image_url=image_url, year=year,
+            ))
 
         for item in tv_shows:
             tmdb_id = item["id"]
@@ -100,7 +76,6 @@ class TmdbScraper(Scraper):
             year = (item.get("first_air_date", "") or "")[:4]
             poster = item.get("poster_path", "") or ""
             image_url = f"https://image.tmdb.org/t/p/w500{poster}" if poster else ""
-
             results.append(Metadata(
                 id=f"tmdb:{tmdb_id}", title=title, type=MetadataType.MULTI,
                 image_url=image_url, year=year,
@@ -119,78 +94,54 @@ class TmdbScraper(Scraper):
 
     def _scrape_movie(self, metadata: Metadata) -> Optional[Single | MultiSourceMedia]:
         tmdb_id = metadata.id
-
         if tmdb_id.startswith("tmdb:"):
             tmdb_id = tmdb_id.replace("tmdb:", "")
 
-        self.logger.info(f"Scraping '{metadata.title}' via Videasy...")
-        result = self.videasy.resolve(
-            tmdb_id=tmdb_id,
-            title=metadata.title,
-            media_type="movie",
-            year=metadata.year or "",
-        )
+        self.logger.info(f"Scraping '{metadata.title}'...")
 
-        if not result:
+        # Get browser URLs for all providers
+        urls = self.encdec.get_all_browser_urls(tmdb_id, "movie")
+
+        if not urls:
             self.logger.error(f"No streams found for '{metadata.title}'")
             return None
 
-        sources = result.get("sources", [])
+        # Build sources list
+        sources = []
+        for pid, url in urls.items():
+            pname = PROVIDERS.get(pid, {}).get("name", pid)
+            sources.append({"url": url, "quality": pname})
 
         if len(sources) == 1:
-            return Single(
-                url=sources[0]["url"],
-                title=metadata.title,
-                referrer="https://www.vidking.net/",
-                year=metadata.year,
-            )
+            return Single(url=sources[0]["url"], title=metadata.title, year=metadata.year)
 
-        return MultiSourceMedia(
-            sources=sources,
-            title=metadata.title,
-            referrer="https://www.vidking.net/",
-            year=metadata.year,
-            subtitles=result.get("subtitles"),
-        )
+        return MultiSourceMedia(sources=sources, title=metadata.title, year=metadata.year)
 
     def _scrape_tv(self, metadata: Metadata, episode: EpisodeSelector) -> Optional[Multi | MultiSourceMedia]:
         tmdb_id = metadata.id
-
         if tmdb_id.startswith("tmdb:"):
             tmdb_id = tmdb_id.replace("tmdb:", "")
 
-        self.logger.info(f"Scraping '{metadata.title}' S{episode.season}E{episode.episode} via Videasy...")
-        result = self.videasy.resolve(
-            tmdb_id=tmdb_id,
-            title=metadata.title,
-            media_type="tv",
-            year=metadata.year or "",
-            season=str(episode.season),
-            episode=str(episode.episode),
-        )
+        self.logger.info(f"Scraping '{metadata.title}' S{episode.season}E{episode.episode}...")
 
-        if not result:
+        urls = self.encdec.get_all_browser_urls(tmdb_id, "tv",
+                                                 str(episode.season), str(episode.episode))
+
+        if not urls:
             self.logger.error(f"No streams found for '{metadata.title}'")
             return None
 
-        sources = result.get("sources", [])
+        sources = []
+        for pid, url in urls.items():
+            pname = PROVIDERS.get(pid, {}).get("name", pid)
+            sources.append({"url": url, "quality": pname})
 
         if len(sources) == 1:
-            return Multi(
-                url=sources[0]["url"],
-                title=metadata.title,
-                referrer="https://www.vidking.net/",
-                episode=episode,
-                subtitles=None,
-            )
+            return Multi(url=sources[0]["url"], title=metadata.title,
+                         episode=episode, subtitles=None)
 
-        return Multi(
-            url=sources[0]["url"] if sources else "",
-            title=metadata.title,
-            referrer="https://www.vidking.net/",
-            episode=episode,
-            subtitles=None,
-        )
+        return Multi(url=sources[0]["url"] if sources else "", title=metadata.title,
+                     episode=episode, subtitles=None)
 
     def scrape_episodes(self, metadata: Metadata) -> Dict:
         if metadata.type == MetadataType.MULTI:
