@@ -502,8 +502,12 @@
   // ── Auto-add magnet from URL query param ────────────────────────────────
   const urlParams = new URLSearchParams(window.location.search);
   const autoMagnet = urlParams.get('magnet');
+  const defaultName = urlParams.get('name') || '';
   if (autoMagnet) {
     document.getElementById('magnetInput').value = autoMagnet;
+    if (defaultName) {
+      document.getElementById('magnetInput').placeholder = `Adding: ${defaultName}`;
+    }
     addTorrent();
   }
 

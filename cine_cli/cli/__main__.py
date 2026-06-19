@@ -156,7 +156,6 @@ def cine_cli(
             import webbrowser
             import time
             import os
-            import signal
 
             from ..resolvers.torrent import TorrentResolver
 
@@ -218,7 +217,16 @@ def cine_cli(
                 f"👤{selected_stream.seeders} | {selected_stream.filename[:40]}"
             )
 
-            # ── Start WebTorrent web server ──────────────────────────────────
+            # ── Open browser with magnet link ─────────────────────────────────
+            import urllib.parse
+            import webbrowser
+            import subprocess as sp
+            import time
+
+            magnet = selected_stream.magnet_url
+            file_name = selected_stream.filename or selected_stream.quality
+
+            # Start the web server
             web_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), '..', 'torrent-web')
             web_dir = os.path.abspath(web_dir)
             server_js = os.path.join(web_dir, 'server.js')
@@ -228,43 +236,39 @@ def cine_cli(
                 cine_cli_logger.error("Run: cd torrent-web && npm install express webtorrent socket.io")
                 raise typer.Exit(1)
 
-            # Start the web server as a background process
-            cine_cli_logger.info("Starting torrent web server...")
+            cine_cli_logger.info("Starting torrent web server on http://localhost:3737 ...")
             web_proc = sp.Popen(
                 ["node", server_js, "--port", "3737"],
-                stdout=sp.PIPE, stderr=sp.PIPE,
+                stdout=sp.DEVNULL, stderr=sp.DEVNULL,
                 cwd=web_dir,
             )
 
-            # Wait for server to start
             time.sleep(2)
 
-            # Check if server started
             if web_proc.poll() is not None:
-                stderr = web_proc.stderr.read().decode()
-                cine_cli_logger.error(f"Web server failed to start: {stderr}")
+                cine_cli_logger.error("Web server failed to start!")
                 raise typer.Exit(1)
 
-            # Open browser
-            import urllib.parse
-            magnet = selected_stream.magnet_url
-            url = f"http://localhost:3737/?magnet={urllib.parse.quote(magnet, safe='')}"
+            # Open browser with magnet + name as query params
+            params = urllib.parse.urlencode({"magnet": magnet, "name": file_name})
+            url = f"http://localhost:3737/?{params}"
+
             cine_cli_logger.info(f"Opening browser: {url}")
             webbrowser.open(url)
 
-            print(f"\n  ╔══════════════════════════════════════════════════╗")
-            print(f"  ║  Torrent Web Downloader running at:              ║")
-            print(f"  ║  http://localhost:3737                           ║")
-            print(f"  ╠══════════════════════════════════════════════════╣")
-            print(f"  ║  Magnet: {magnet[:40]}...")
-            print(f"  ║  Press Ctrl+C to stop the server                 ║")
-            print(f"  ╚══════════════════════════════════════════════════╝\n")
+            print(f"\n  ┌─────────────────────────────────────────────────────┐")
+            print(f"  │  ⬇ Torrent Web Downloader                           │")
+            print(f"  │  URL: http://localhost:3737                         │")
+            if file_name:
+                print(f"  │  File: {file_name[:48]}")
+            print(f"  │  Press Ctrl+C to stop the server                    │")
+            print(f"  └─────────────────────────────────────────────────────┘\n")
 
             try:
                 web_proc.wait()
             except KeyboardInterrupt:
                 print("\n  Stopping web server...")
-                web_proc.send_signal(signal.SIGTERM)
+                web_proc.terminate()
                 web_proc.wait(timeout=5)
                 print("  Server stopped.")
         else:
