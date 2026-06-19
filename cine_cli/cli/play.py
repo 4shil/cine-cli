@@ -1,16 +1,14 @@
-"""Playback module for cine-cli — ani-cli style.
+"""Playback module for cine-cli — exact ani-cli UI replication.
 
-Exact replication of ani-cli's playback and menu logic:
-- nohup mpv with --force-media-title, --referrer, --sub-file
-- Post-playback menu: next, replay, previous, select, change_quality, quit
-- Auto-select quality (best) by default
-- Input-based menu using simple prompt (fzf-style)
+Uses fzf for all selection (quality, menu, episode select).
+Falls back to auto-select when fzf is not available.
 """
 from __future__ import annotations
 from typing import TYPE_CHECKING, Optional
 
 import subprocess
 import sys
+import os
 
 if TYPE_CHECKING:
     from typing import Literal
@@ -45,7 +43,7 @@ def play(media: Media, metadata: Metadata, scraper, episode, config) -> Optional
     # Launch MPV (detached, like ani-cli)
     __play_episode(media, metadata, chosen_player, config)
 
-    # Post-playback menu loop (ani-cli style)
+    # Post-playback menu loop (ani-cli style with fzf)
     if is_tv:
         __tv_menu_loop(media, metadata, scraper, episode, config, chosen_player)
     else:
@@ -54,11 +52,43 @@ def play(media: Media, metadata: Metadata, scraper, episode, config) -> Optional
     return None
 
 
+def __fzf(prompt: str, choices: str, multi: bool = False) -> Optional[str]:
+    """Run fzf with given prompt and choices. Returns selected line or None."""
+    if not __has_fzf():
+        return None
+
+    args = ["fzf", "--reverse", "--cycle", "--prompt", prompt]
+    if multi:
+        args += ["-m"]
+
+    try:
+        result = subprocess.run(
+            args,
+            input=choices,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+        return None
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return None
+
+
+def __has_fzf() -> bool:
+    """Check if fzf is available."""
+    try:
+        subprocess.run(["fzf", "--version"], capture_output=True, timeout=5, check=True)
+        return True
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return False
+
+
 def __play_episode(media: Media, metadata: Metadata, chosen_player, config):
     """Launch MPV detached — exact ani-cli pattern."""
     title = metadata.display_name if hasattr(metadata, 'display_name') else metadata.title
 
-    # Build MPV args (ani-cli style)
     mpv_args = [
         "mpv",
         media.url,
@@ -73,8 +103,6 @@ def __play_episode(media: Media, metadata: Metadata, chosen_player, config):
             if sub.startswith("http"):
                 mpv_args.append(f"--sub-file={sub}")
 
-    # Launch detached (exact ani-cli pattern)
-    # nohup mpv ... >/dev/null 2>&1 &
     try:
         subprocess.Popen(
             mpv_args,
@@ -91,7 +119,7 @@ def __play_episode(media: Media, metadata: Metadata, chosen_player, config):
 
 
 def __select_quality(media: MultiSourceMedia, preferred_quality: Optional[str] = None) -> Optional[Single]:
-    """Select quality — auto-select best, or use preferred_quality if specified."""
+    """Select quality using fzf — ani-cli style."""
     sources = media.sources
     if not sources:
         return None
@@ -120,18 +148,33 @@ def __select_quality(media: MultiSourceMedia, preferred_quality: Optional[str] =
                     referrer=media.referrer, year=media.year, subtitles=media.subtitles,
                 )
 
-    # Show available qualities
-    print(f"\n  {Colours.BLUE.apply(media.display_name)} — {len(sorted_sources)} qualities available:\n")
+    # Build choices for fzf (ani-cli style: numbered list)
+    choices_lines = []
     for i, source in enumerate(sorted_sources, 1):
         quality = source.get("quality", "unknown")
         from urllib.parse import urlparse
         domain = urlparse(source["url"]).netloc
-        print(f"    {Colours.GREEN.apply(str(i))}. {quality:>8}  —  {domain}")
-    print()
+        choices_lines.append(f"{i}. {quality:>8}  —  {domain}")
+    choices = "\n".join(choices_lines)
 
-    # Auto-select best quality
+    # Show fzf selector
+    selected = __fzf(f"Select quality for {media.title}: ", choices)
+
+    if selected:
+        # Parse selection: "1. 1080p  —  domain" -> index 0
+        try:
+            idx = int(selected.split(".")[0].strip()) - 1
+            if 0 <= idx < len(sorted_sources):
+                s = sorted_sources[idx]
+                return Single(
+                    url=s["url"], title=media.title,
+                    referrer=media.referrer, year=media.year, subtitles=media.subtitles,
+                )
+        except (ValueError, IndexError):
+            pass
+
+    # Fallback: auto-select best
     best = sorted_sources[0]
-    print(f"  → {Colours.GREEN.apply(best.get('quality', 'unknown'))} selected (best)\n")
     return Single(
         url=best["url"], title=media.title,
         referrer=media.referrer, year=media.year, subtitles=media.subtitles,
@@ -139,12 +182,16 @@ def __select_quality(media: MultiSourceMedia, preferred_quality: Optional[str] =
 
 
 def __movie_menu_loop(media, metadata, config, chosen_player):
-    """Post-playback menu for movies: replay, change_quality, quit."""
+    """Post-playback menu for movies — ani-cli style fzf menu."""
     replay_url = media.url
 
     while True:
-        print()
-        cmd = __menu_prompt("Playing movie", ["replay", "change_quality", "quit"])
+        choices = "\n".join(["replay", "change_quality", "quit"])
+        cmd = __fzf(f"Playing {metadata.title}... ", choices)
+
+        if cmd is None:
+            # fzf not available or cancelled — auto-quit
+            return
 
         if cmd == "replay":
             print(f"\n  Replaying '{Colours.BLUE.apply(metadata.title)}'...")
@@ -160,7 +207,7 @@ def __movie_menu_loop(media, metadata, config, chosen_player):
             else:
                 print("  Only one quality available.")
 
-        elif cmd in ("quit", "q", None):
+        elif cmd == "quit":
             return
 
         else:
@@ -168,17 +215,17 @@ def __movie_menu_loop(media, metadata, config, chosen_player):
 
 
 def __tv_menu_loop(media, metadata, scraper, episode, config, chosen_player):
-    """Post-playback menu for TV series: next, previous, replay, select, change_quality, quit."""
+    """Post-playback menu for TV series — ani-cli style fzf menu."""
     current_episode = episode.episode
     current_season = episode.season
     replay_url = media.url
 
     while True:
-        print()
-        cmd = __menu_prompt(
-            f"Playing S{current_season:02d}E{current_episode:02d} of {metadata.title}",
-            ["next", "previous", "replay", "select", "change_quality", "quit"]
-        )
+        choices = "\n".join(["next", "previous", "replay", "select", "change_quality", "quit"])
+        cmd = __fzf(f"Playing S{current_season:02d}E{current_episode:02d} of {metadata.title}... ", choices)
+
+        if cmd is None:
+            return
 
         if cmd == "next":
             current_episode += 1
@@ -211,7 +258,7 @@ def __tv_menu_loop(media, metadata, scraper, episode, config, chosen_player):
             __play_episode(media, metadata, chosen_player, config)
 
         elif cmd == "select":
-            new_ep = __select_episode_interactive(current_episode)
+            new_ep = __select_episode_fzf(current_episode)
             if new_ep is not None and new_ep != current_episode:
                 current_episode = new_ep
                 print(f"\n  Playing episode {current_episode}...")
@@ -232,27 +279,15 @@ def __tv_menu_loop(media, metadata, scraper, episode, config, chosen_player):
             else:
                 print("  Only one quality available.")
 
-        elif cmd in ("quit", "q", None):
+        elif cmd == "quit":
             return
 
         else:
             print(f"  Unknown option: {cmd}")
 
 
-def __menu_prompt(title: str, options: list) -> Optional[str]:
-    """Show menu prompt — ani-cli style."""
-    print(f"\n  {Colours.BLUE.apply(title)}")
-    print(f"  Options: {Colours.GREEN.apply(' | '.join(options))}")
-    print()
-    try:
-        choice = input("  Enter choice: ").strip().lower()
-        return choice if choice else None
-    except (EOFError, KeyboardInterrupt):
-        return None
-
-
-def __select_episode_interactive(current_episode: int) -> Optional[int]:
-    """Let user select a specific episode."""
+def __select_episode_fzf(current_episode: int) -> Optional[int]:
+    """Select episode using fzf — ani-cli style."""
     try:
         ep_input = input(f"  Enter episode number (current: {current_episode}): ").strip()
         if not ep_input:
