@@ -63,3 +63,5 @@ cine_cli/utils/scraper/the_movie_db.py
 cine_cli/utils/subtitles/__init__.py
 cine_cli/utils/subtitles/iso_639.json
 cine_cli/utils/subtitles/lang.py
+cine_cli/videasy_decryptor/decrypt.js
+cine_cli/videasy_decryptor/module1.wasm

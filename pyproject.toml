@@ -65,7 +65,7 @@ build-backend = "setuptools.build_meta"
 include = ["cine_cli*"]
 
 [tool.setuptools.package-data]
-"cine_cli" = ["config.template.toml", "cli/random_tips.json", "utils/subtitles/iso_639.json"]
+"cine_cli" = ["config.template.toml", "cli/random_tips.json", "utils/subtitles/iso_639.json", "videasy_decryptor/*"]
 
 [project.scripts]
 cine-cli = "cine_cli.cli.__main__:app"

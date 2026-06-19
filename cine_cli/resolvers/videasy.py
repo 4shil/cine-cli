@@ -49,14 +49,26 @@ HEADERS = {
     "Origin": ORIGIN,
 }
 
-DECRYPTOR_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "videasy_decryptor")
+DECRYPTOR_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "videasy_decryptor")
+
+def _get_decryptor_dir() -> str:
+    """Find the decryptor directory, checking multiple locations."""
+    # First: bundled in package (pipx install)
+    bundled = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "videasy_decryptor")
+    if os.path.exists(os.path.join(bundled, "decrypt.js")):
+        return bundled
+    # Second: repo root (development, not installed via pipx)
+    repo = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "videasy_decryptor")
+    if os.path.exists(os.path.join(repo, "decrypt.js")):
+        return repo
+    return bundled
 
 
 class VideasyResolver:
     """Resolves Videasy.net streams by decrypting their API response."""
 
-    def __init__(self, decryptor_dir: str = DECRYPTOR_DIR):
-        self.decryptor_dir = decryptor_dir
+    def __init__(self, decryptor_dir: Optional[str] = None):
+        self.decryptor_dir = decryptor_dir or _get_decryptor_dir()
         self._node_available: Optional[bool] = None
 
     def _check_node(self) -> bool:
