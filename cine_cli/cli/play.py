@@ -3,16 +3,16 @@ from typing import TYPE_CHECKING, Type, cast
 import subprocess
 import time
 
+from ..media import Media, Metadata, Multi, Single, MultiSourceMedia
+from ..scraper import Scraper, ScrapeEpisodesT, ScrapeResultT
+from ..players import Player
+from ..utils.platform import SUPPORTED_PLATFORMS
+from ..utils.episode_selector import EpisodeSelector
+
+from typing import Optional, Literal
+
 if TYPE_CHECKING:
-    from typing import Optional, Literal
-
     from ..config import Config
-    from ..media import Media, Metadata, Multi, Single, MultiSourceMedia
-    from ..scraper import Scraper, ScrapeEpisodesT
-    from ..players import Player
-
-    from ..utils.platform import SUPPORTED_PLATFORMS
-    from ..utils.episode_selector import EpisodeSelector
 
 from devgoldyutils import Colours
 

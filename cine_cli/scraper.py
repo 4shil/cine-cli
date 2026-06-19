@@ -1,17 +1,15 @@
 from __future__ import annotations
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Dict, Literal, Iterable, Optional
 
 if TYPE_CHECKING:
-    from typing import Dict, Literal, Iterable, Optional
-
     from .config import Config
     from .utils import EpisodeSelector
     from .http_client import HTTPClient
-    from .media import Metadata, Multi, Single
     from .media import Metadata, Multi, Single, MultiSourceMedia
-    ScraperOptionsT = Dict[str, str | bool]
-    ScrapeEpisodesT = Dict[int, int] | Dict[None, Literal[1]]
-    ScrapeResultT = Optional[Multi | Single | MultiSourceMedia]
+
+ScraperOptionsT = Dict[str, str | bool]
+ScrapeEpisodesT = Dict[int, int] | Dict[None, Literal[1]]
+ScrapeResultT = "Optional[Multi | Single | MultiSourceMedia]"
 
 from bs4 import BeautifulSoup
 from abc import ABC, abstractmethod

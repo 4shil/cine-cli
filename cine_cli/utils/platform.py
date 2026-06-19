@@ -1,10 +1,10 @@
 from __future__ import annotations
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
+
+SUPPORTED_PLATFORMS = Literal["Windows", "Linux", "Android", "Darwin", "iOS", "FreeBSD"]
 
 if TYPE_CHECKING:
-    from typing import Literal
-
-    SUPPORTED_PLATFORMS = Literal["Windows", "Linux", "Android", "Darwin", "iOS", "FreeBSD"]
+    pass
 
 import sys
 import platform
