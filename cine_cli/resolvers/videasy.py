@@ -20,6 +20,7 @@ import json
 import subprocess
 import os
 import re
+import time
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
@@ -76,14 +77,18 @@ class VideasyResolver:
         return self._node_available
 
     def _fetch_cipher(self, provider_endpoint: str, params: dict) -> Optional[str]:
+        """Fetch cipher from Videasy API with retries."""
         url = f"{API_BASE}/{provider_endpoint}/sources-with-title?{urlencode(params)}"
         req = Request(url, headers=HEADERS)
-        try:
-            with urlopen(req, timeout=20) as r:
-                return r.read().decode("utf-8", errors="replace").strip()
-        except Exception as e:
-            cine_cli_logger.debug(f"[videasy] API error: {e}")
-            return None
+        for attempt in range(3):
+            try:
+                with urlopen(req, timeout=20) as r:
+                    return r.read().decode("utf-8", errors="replace").strip()
+            except Exception as e:
+                cine_cli_logger.debug(f"[videasy] API error (attempt {attempt+1}): {e}")
+                if attempt < 2:
+                    time.sleep(1)
+        return None
 
     def _decrypt(self, cipher_hex: str, tmdb_id: str) -> Optional[dict]:
         if not self._check_node():
@@ -156,12 +161,10 @@ class VideasyResolver:
             if depth > 5 or not isinstance(obj, (dict, list)):
                 return
             if isinstance(obj, dict):
-                # Direct source entry: {"url": "...", "quality": "720p"}
                 url = obj.get("url", "")
                 if url and (".m3u8" in url or ".mp4" in url):
                     quality = obj.get("quality") or obj.get("label") or "unknown"
                     sources.append({"quality": quality, "url": url})
-                # Recurse
                 for v in obj.values():
                     _extract(v, depth + 1)
             elif isinstance(obj, list):
@@ -170,7 +173,6 @@ class VideasyResolver:
 
         _extract(data)
 
-        # Deduplicate
         seen = set()
         return [s for s in sources if not (s["url"] in seen or seen.add(s["url"]))]
 
@@ -207,12 +209,10 @@ class VideasyResolver:
 
         sources = result["sources"]
 
-        # Try preferred quality
         for s in sources:
             if prefer_quality.lower() in s.get("quality", "").lower():
                 return s["url"]
 
-        # Fall back to any
         if sources:
             return sources[0]["url"]
         return None
