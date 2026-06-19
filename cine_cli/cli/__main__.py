@@ -7,7 +7,12 @@ if TYPE_CHECKING:
 import typer
 import shutil
 import logging
+import subprocess
+import sys
 from pathlib import Path
+
+from ..media import MetadataType
+from ..config import Config
 
 from .play import play
 from .ui import welcome_msg
@@ -147,15 +152,121 @@ def cine_cli(
         media, metadata, chosen_episode = content_or_bool
 
         if download:
-            dl = Download(config)
+            import subprocess as sp
+            import webbrowser
+            import time
+            import os
+            import signal
 
-            cine_cli_logger.debug(f"Downloading from this url -> '{hide_ip(media.url, config.hide_ip)}'")
+            from ..resolvers.torrent import TorrentResolver
 
-            popen = dl.download(media)
-            
-            if popen:
-                popen.wait()
+            imdb_id = metadata.id
+            if imdb_id.startswith("imdb:"):
+                imdb_id = imdb_id.replace("imdb:", "")
+            elif imdb_id.startswith("tmdb:"):
+                imdb_id = imdb_id.replace("tmdb:", "")
 
+            media_type = "tv" if metadata.type == MetadataType.MULTI else "movie"
+            season = str(chosen_episode.season) if chosen_episode else "1"
+            episode = str(chosen_episode.episode) if chosen_episode else "1"
+
+            # Fetch torrents from Torrentio
+            torrent_resolver = TorrentResolver()
+            streams = torrent_resolver.fetch_streams(imdb_id, media_type, season, episode)
+
+            if not streams:
+                cine_cli_logger.error("No torrents found!")
+                raise typer.Exit(1)
+
+            # Sort by seeders (highest first)
+            streams.sort(key=lambda s: (-(s.seeders or 0), s.quality))
+
+            # Select torrent
+            selected_stream = None
+            if not sys.stdin.isatty():
+                selected_stream = streams[0]
+            else:
+                lines = []
+                for i, s in enumerate(streams, 1):
+                    size_gb = (s.size or 0) / 1024
+                    size_str = f"{size_gb:.1f}GB" if size_gb >= 1 else f"{s.size or 0}MB"
+                    seed_str = f"👤{s.seeders}" if s.seeders else "👤0"
+                    fname = (s.filename or "?")[:45]
+                    lines.append(f"{i:>3}. {s.quality:>6}  {size_str:>7}  {seed_str:>5}  {fname}")
+                try:
+                    result = sp.run(
+                        ["fzf", "--reverse", "--cycle", "--prompt", "Select torrent: ",
+                         "--header", "Quality  Size    Seeds  Filename"],
+                        input="\n".join(lines), capture_output=True, text=True, timeout=120,
+                    )
+                    if result.returncode == 0 and result.stdout.strip():
+                        idx = int(result.stdout.strip().split(".")[0].strip()) - 1
+                        if 0 <= idx < len(streams):
+                            selected_stream = streams[idx]
+                except (FileNotFoundError, sp.TimeoutExpired, OSError):
+                    pass
+                if selected_stream is None:
+                    selected_stream = streams[0]
+
+            if selected_stream is None:
+                cine_cli_logger.error("No torrent selected!")
+                raise typer.Exit(1)
+
+            size_gb = (selected_stream.size or 0) / 1024
+            cine_cli_logger.info(
+                f"Selected: {selected_stream.quality} | {size_gb:.1f}GB | "
+                f"👤{selected_stream.seeders} | {selected_stream.filename[:40]}"
+            )
+
+            # ── Start WebTorrent web server ──────────────────────────────────
+            web_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), '..', 'torrent-web')
+            web_dir = os.path.abspath(web_dir)
+            server_js = os.path.join(web_dir, 'server.js')
+
+            if not os.path.exists(server_js):
+                cine_cli_logger.error(f"Web server not found: {server_js}")
+                cine_cli_logger.error("Run: cd torrent-web && npm install express webtorrent socket.io")
+                raise typer.Exit(1)
+
+            # Start the web server as a background process
+            cine_cli_logger.info("Starting torrent web server...")
+            web_proc = sp.Popen(
+                ["node", server_js, "--port", "3737"],
+                stdout=sp.PIPE, stderr=sp.PIPE,
+                cwd=web_dir,
+            )
+
+            # Wait for server to start
+            time.sleep(2)
+
+            # Check if server started
+            if web_proc.poll() is not None:
+                stderr = web_proc.stderr.read().decode()
+                cine_cli_logger.error(f"Web server failed to start: {stderr}")
+                raise typer.Exit(1)
+
+            # Open browser
+            import urllib.parse
+            magnet = selected_stream.magnet_url
+            url = f"http://localhost:3737/?magnet={urllib.parse.quote(magnet, safe='')}"
+            cine_cli_logger.info(f"Opening browser: {url}")
+            webbrowser.open(url)
+
+            print(f"\n  ╔══════════════════════════════════════════════════╗")
+            print(f"  ║  Torrent Web Downloader running at:              ║")
+            print(f"  ║  http://localhost:3737                           ║")
+            print(f"  ╠══════════════════════════════════════════════════╣")
+            print(f"  ║  Magnet: {magnet[:40]}...")
+            print(f"  ║  Press Ctrl+C to stop the server                 ║")
+            print(f"  ╚══════════════════════════════════════════════════╝\n")
+
+            try:
+                web_proc.wait()
+            except KeyboardInterrupt:
+                print("\n  Stopping web server...")
+                web_proc.send_signal(signal.SIGTERM)
+                web_proc.wait(timeout=5)
+                print("  Server stopped.")
         else:
             play(media, metadata, chosen_scraper, chosen_episode, config)
 
