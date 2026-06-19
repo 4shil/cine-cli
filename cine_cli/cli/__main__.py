@@ -29,7 +29,8 @@ uwu_app = typer.Typer(pretty_exceptions_enable = False) # NOTE: goldy has an uwu
 def cine_cli(
     query: Optional[List[str]] = typer.Argument(None, help = "A film, tv show or anime you would like to Query."), 
     debug: Optional[bool] = typer.Option(None, help = "Enable extra logging details. Useful for bug reporting."), 
-    player: Optional[str] = typer.Option(None, "--player", "-p", help = "Player you would like to stream with. E.g. mpv, vlc, browser"), 
+    player: Optional[str] = typer.Option(None, "--player", "-p", help = "Player you would like to stream with. E.g. mpv, vlc, browser"),
+    quality: Optional[str] = typer.Option(None, "--quality", "-q", help = "Stream quality. E.g. 360p, 480p, 720p, 1080p. Skips quality prompt if provided."), 
     scraper: Optional[str] = typer.Option(None, "--scraper", "-s", help = "Scraper you would like to scrape with. E.g. test, youtube, jellyplex"), 
     fzf: Optional[bool] = typer.Option(None, help = "Toggle fzf on/off for all user selection prompts."), 
     preview: Optional[bool] = typer.Option(None, help = "Toggle fzf's preview (image preview, etc) on/off for fzf prompts."), 
@@ -54,6 +55,7 @@ def cine_cli(
         config,
         debug = debug,
         player = player,
+        quality = quality,
         scraper = (scraper, ["scrapers", "default"]),
         fzf = (fzf, ["ui", "fzf"]),
         preview = (preview, ["ui", "preview"]),

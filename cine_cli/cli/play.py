@@ -7,7 +7,7 @@ if TYPE_CHECKING:
     from typing import Optional, Literal
 
     from ..config import Config
-    from ..media import Media, Metadata
+    from ..media import Media, Metadata, Multi, Single, MultiSourceMedia
     from ..scraper import Scraper, ScrapeEpisodesT
     from ..players import Player
 
@@ -33,6 +33,13 @@ def play(media: Media, metadata: Metadata, scraper: Scraper, episode: EpisodeSel
     cache.set_cache(str(metadata.id), episode.__dict__)
 
     chosen_player = __get_player(config, platform)
+
+    # Quality selection for MultiSourceMedia
+    if isinstance(media, MultiSourceMedia):
+        selected = __select_quality(media, config.fzf_enabled, config.quality)
+        if selected is None:
+            return None
+        media = selected
 
     quality_string = ""
     episode_details_string = ""
@@ -165,6 +172,109 @@ def play(media: Media, metadata: Metadata, scraper: Scraper, episode: EpisodeSel
         popen.wait()
 
     return None
+
+def __select_quality(media: MultiSourceMedia, fzf_enabled: bool, preferred_quality: Optional[str] = None) -> Optional[Single]:
+    """Prompt user to select quality for multi-source media.
+
+    Returns a Single media object with the selected URL, or None if cancelled.
+    If preferred_quality is provided and matches an option, auto-selects it.
+    """
+    sources = media.sources
+    if not sources:
+        return None
+
+    if len(sources) == 1:
+        return Single(
+            url=sources[0]["url"],
+            title=media.title,
+            referrer=media.referrer,
+            year=media.year,
+            subtitles=media.subtitles,
+        )
+
+    # Sort by quality (highest first)
+    quality_order = {"4k": 2160, "2160p": 2160, "1080p": 1080, "720p": 720, "480p": 480, "360p": 360, "unknown": 0}
+    sorted_sources = sorted(
+        sources,
+        key=lambda s: quality_order.get(s.get("quality", "unknown").lower(), 0),
+        reverse=True,
+    )
+
+    # Auto-select if preferred quality matches
+    if preferred_quality:
+        pq = preferred_quality.lower()
+        for s in sorted_sources:
+            if s.get("quality", "").lower() == pq:
+                cine_cli_logger.info(f"  Quality: {Colours.GREEN.apply(s['quality'])} (preferred)")
+                return Single(
+                    url=s["url"],
+                    title=media.title,
+                    referrer=media.referrer,
+                    year=media.year,
+                    subtitles=media.subtitles,
+                )
+
+    print(f"\n  {Colours.BLUE.apply(media.display_name)} — {len(sorted_sources)} qualities available:\n")
+
+    for i, source in enumerate(sorted_sources, 1):
+        quality = source.get("quality", "unknown")
+        url = source["url"]
+        # Show URL domain for clarity
+        from urllib.parse import urlparse
+        domain = urlparse(url).netloc
+        marker = " ◄" if preferred_quality and quality.lower() == preferred_quality.lower() else ""
+        print(f"    {Colours.GREEN.apply(str(i))}. {quality:>8}  —  {domain}{marker}")
+
+    print()
+
+    try:
+        if fzf_enabled:
+            # Use fzf for selection
+            choices = "\n".join(
+                f"{s.get('quality', 'unknown')}: {s['url']}" for s in sorted_sources
+            )
+            result = subprocess.run(
+                ["fzf", "--prompt", "Select quality: ", "--height", "40%", "--reverse"],
+                input=choices, capture_output=True, text=True, timeout=30,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                selected_url = result.stdout.strip().split(": ", 1)[1] if ": " in result.stdout.strip() else result.stdout.strip()
+                for s in sorted_sources:
+                    if s["url"] == selected_url:
+                        media.set_url(selected_url)
+                        return Single(
+                            url=selected_url,
+                            title=media.title,
+                            referrer=media.referrer,
+                            year=media.year,
+                            subtitles=media.subtitles,
+                        )
+            return None
+        else:
+            # Simple numbered prompt
+            while True:
+                try:
+                    choice = input(f"  Select quality (1-{len(sorted_sources)}): ").strip()
+                    idx = int(choice) - 1
+                    if 0 <= idx < len(sorted_sources):
+                        selected = sorted_sources[idx]
+                        selected_url = selected["url"]
+                        quality = selected.get("quality", "unknown")
+                        print(f"  → {Colours.GREEN.apply(quality)} selected\n")
+                        return Single(
+                            url=selected_url,
+                            title=media.title,
+                            referrer=media.referrer,
+                            year=media.year,
+                            subtitles=media.subtitles,
+                        )
+                    else:
+                        print(f"  Invalid choice. Enter 1-{len(sorted_sources)}.")
+                except (ValueError, EOFError):
+                    return None
+    except (KeyboardInterrupt, EOFError):
+        return None
+
 
 def __get_player(config: Config, platform: SUPPORTED_PLATFORMS) -> Player:
     player = PLAYER_TABLE.get(config.player, CustomPlayer)

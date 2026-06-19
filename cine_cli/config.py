@@ -65,6 +65,7 @@ class ConfigData(TypedDict):
     version: int
     debug: bool | ConfigDebugData
     player: str | PlayerData
+    quality: NotRequired[str]
     editor: str
     parser: SupportedParsersT
     skip_update_checker: bool
@@ -127,6 +128,16 @@ class Config():
             return player_config.get("binary", "mpv")
 
         return player_config
+
+    @property
+    def quality(self) -> Optional[str]:
+        """Returns preferred quality (e.g. '720p', '1080p') or None for interactive selection."""
+        q = self.data.get("quality", None)
+        if isinstance(q, str):
+            return q.lower()
+        if isinstance(q, dict):
+            return str(q.get("resolution", "")).lower() or None
+        return None
 
     @property
     def player_args(self) -> List[str]:

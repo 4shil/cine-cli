@@ -8,9 +8,10 @@ if TYPE_CHECKING:
     from .utils import EpisodeSelector
     from .http_client import HTTPClient
     from .media import Metadata, Multi, Single
-
+    from .media import Metadata, Multi, Single, MultiSourceMedia
     ScraperOptionsT = Dict[str, str | bool]
     ScrapeEpisodesT = Dict[int, int] | Dict[None, Literal[1]]
+    ScrapeResultT = Optional[Multi | Single | MultiSourceMedia]
 
 from bs4 import BeautifulSoup
 from abc import ABC, abstractmethod
@@ -49,7 +50,7 @@ class Scraper(ABC):
         ...
 
     @abstractmethod
-    def scrape(self, metadata: Metadata, episode: EpisodeSelector) -> Optional[Multi | Single]:
+    def scrape(self, metadata: Metadata, episode: EpisodeSelector) -> ScrapeResultT:
         """
         Where your scraping for the media should be performed. 
         Should return an instance of `Media()` but return `None` if the media is unavailable.

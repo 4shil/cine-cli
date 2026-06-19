@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Dict, Iterable, Optional
 
-from cine_cli import Scraper, Metadata, MetadataType, Multi, Single
+from cine_cli import Scraper, Metadata, MetadataType, Multi, Single, MultiSourceMedia
 from cine_cli.utils import EpisodeSelector
 from cine_cli.resolvers.videasy import VideasyResolver
 
@@ -119,40 +119,49 @@ class TmdbScraper(Scraper):
         for r in results:
             yield r
 
-    def scrape(self, metadata: Metadata, episode: EpisodeSelector) -> Optional[Multi | Single]:
+    def scrape(self, metadata: Metadata, episode: EpisodeSelector) -> Optional[Multi | Single | MultiSourceMedia]:
         if metadata.type == MetadataType.MULTI:
             return self._scrape_tv(metadata, episode)
         return self._scrape_movie(metadata)
 
-    def _scrape_movie(self, metadata: Metadata) -> Optional[Single]:
+    def _scrape_movie(self, metadata: Metadata) -> Optional[Single | MultiSourceMedia]:
         imdb_id = metadata.id
         tmdb_id = imdb_id
 
-        # If we have a TMDB ID, convert to IMDb
         if imdb_id.startswith("tmdb:"):
             tmdb_id = imdb_id.replace("tmdb:", "")
         elif not imdb_id.startswith("tt"):
             tmdb_id = f"tt{int(imdb_id):07d}"
 
-        # Try Videasy resolver
         self.logger.info(f"Scraping '{metadata.title}' via Videasy...")
-        stream_url = self.videasy.get_best_stream(
+        result = self.videasy.resolve(
             tmdb_id=tmdb_id,
             title=metadata.title,
             media_type="movie",
             year=metadata.year or "",
         )
 
-        if stream_url:
+        if not result:
+            self.logger.error(f"No streams found for '{metadata.title}'")
+            return None
+
+        sources = result.get("sources", [])
+
+        if len(sources) == 1:
             return Single(
-                url=stream_url,
+                url=sources[0]["url"],
                 title=metadata.title,
                 referrer="https://www.vidking.net/",
                 year=metadata.year,
             )
 
-        self.logger.error(f"No streams found for '{metadata.title}'")
-        return None
+        return MultiSourceMedia(
+            sources=sources,
+            title=metadata.title,
+            referrer="https://www.vidking.net/",
+            year=metadata.year,
+            subtitles=result.get("subtitles"),
+        )
 
     def _scrape_tv(self, metadata: Metadata, episode: EpisodeSelector) -> Optional[Multi]:
         imdb_id = metadata.id
