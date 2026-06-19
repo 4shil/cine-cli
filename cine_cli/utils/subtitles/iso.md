@@ -1,1 +1,0 @@
-https://github.com/haliaeetus/iso-639/blob/master/data/iso_639-1.min.json

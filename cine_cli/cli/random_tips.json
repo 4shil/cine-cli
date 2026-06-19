@@ -1,5 +1,0 @@
-[
-    "When search results are displayed individual media like films and videos are coloured BLUE and media with seasons or episodes are coloured PINK GREY.", 
-    "List the full suit of command options with: mov-cli --help", 
-    "On Linux mov-cli can display image banners or thumbnails in the fzf selection menu. \nJust run your command with the '--preview' flag or set it in the config.toml."
-]

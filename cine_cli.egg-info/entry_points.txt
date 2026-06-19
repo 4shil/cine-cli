@@ -1,3 +1,0 @@
-[console_scripts]
-cine-cli = cine_cli.cli.__main__:app
-cine-cli-dev = cine_cli.dev_cli.__main__:app
