@@ -1,7 +1,7 @@
-"""Playback module for cine-cli — exact ani-cli UI replication.
+"""Playback module for cine-cli — exact ani-cli replication.
 
-Uses fzf for all selection (quality, menu, episode select).
-Falls back to auto-select when fzf is not available.
+Uses shell-level nohup pattern for MPV detachment.
+Uses fzf for all interactive selection.
 """
 from __future__ import annotations
 from typing import TYPE_CHECKING, Optional
@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Optional
 import subprocess
 import sys
 import os
+import signal
 
 if TYPE_CHECKING:
     from typing import Literal
@@ -29,8 +30,6 @@ def play(media: Media, metadata: Metadata, scraper, episode, config) -> Optional
     cache = Cache(platform)
     cache.set_cache(str(metadata.id), episode.__dict__)
 
-    chosen_player = __get_player(config, platform)
-
     # Quality selection for MultiSourceMedia
     if isinstance(media, MultiSourceMedia):
         selected = __select_quality(media, config.quality)
@@ -40,16 +39,60 @@ def play(media: Media, metadata: Metadata, scraper, episode, config) -> Optional
 
     is_tv = metadata.type == MetadataType.MULTI
 
-    # Launch MPV (detached, like ani-cli)
-    __play_episode(media, metadata, chosen_player, config)
+    # Play episode (detached, like ani-cli)
+    __play_episode(media, metadata)
 
     # Post-playback menu loop (ani-cli style with fzf)
     if is_tv:
-        __tv_menu_loop(media, metadata, scraper, episode, config, chosen_player)
+        __tv_menu_loop(media, metadata, scraper, episode, config)
     else:
-        __movie_menu_loop(media, metadata, config, chosen_player)
+        __movie_menu_loop(media, metadata, config)
 
     return None
+
+
+def __play_episode(media: Media, metadata: Metadata):
+    """Launch MPV — ani-cli style with proper display access."""
+    title = metadata.display_name if hasattr(metadata, 'display_name') else metadata.title
+
+    cmd = ["mpv"]
+    cmd.append(f"--force-media-title={title}")
+
+    if media.referrer:
+        cmd.append(f"--referrer={media.referrer}")
+
+    if media.subtitles:
+        for sub in media.subtitles:
+            if sub.startswith("http"):
+                cmd.append(f"--sub-file={sub}")
+
+    cmd.append(media.url)
+
+    cine_cli_logger.info(f"Playing '{Colours.BLUE.apply(title)}' with MPV...")
+
+    # Pass full environment (DISPLAY, WAYLAND_DISPLAY, XDG_RUNTIME_DIR, etc.)
+    env = os.environ.copy()
+
+    # Launch detached: nohup + redirect + background (exact ani-cli pattern)
+    import shlex
+    escaped = " ".join(shlex.quote(c) for c in cmd)
+    shell_cmd = f"nohup {escaped} >/dev/null 2>&1 &"
+
+    proc = subprocess.Popen(
+        shell_cmd,
+        shell=True,
+        env=env,
+        # Don't call wait() — we want it detached
+    )
+
+    import time
+    time.sleep(1)
+
+    # Verify MPV started
+    if proc.poll() is not None:
+        cine_cli_logger.warning(f"MPV exited immediately with code {proc.returncode}")
+    else:
+        cine_cli_logger.debug(f"MPV running with PID {proc.pid}")
 
 
 def __fzf(prompt: str, choices: str, multi: bool = False) -> Optional[str]:
@@ -83,39 +126,6 @@ def __has_fzf() -> bool:
         return True
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         return False
-
-
-def __play_episode(media: Media, metadata: Metadata, chosen_player, config):
-    """Launch MPV detached — exact ani-cli pattern."""
-    title = metadata.display_name if hasattr(metadata, 'display_name') else metadata.title
-
-    mpv_args = [
-        "mpv",
-        media.url,
-        f"--force-media-title={title}",
-    ]
-
-    if media.referrer:
-        mpv_args.append(f"--referrer={media.referrer}")
-
-    if media.subtitles:
-        for sub in media.subtitles:
-            if sub.startswith("http"):
-                mpv_args.append(f"--sub-file={sub}")
-
-    try:
-        subprocess.Popen(
-            mpv_args,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-        cine_cli_logger.info(f"Playing '{Colours.BLUE.apply(title)}' with MPV...")
-    except FileNotFoundError:
-        cine_cli_logger.error("MPV not found! Install mpv to play videos.")
-    except Exception as e:
-        cine_cli_logger.error(f"Failed to launch MPV: {e}")
 
 
 def __select_quality(media: MultiSourceMedia, preferred_quality: Optional[str] = None) -> Optional[Single]:
@@ -161,7 +171,6 @@ def __select_quality(media: MultiSourceMedia, preferred_quality: Optional[str] =
     selected = __fzf(f"Select quality for {media.title}: ", choices)
 
     if selected:
-        # Parse selection: "1. 1080p  —  domain" -> index 0
         try:
             idx = int(selected.split(".")[0].strip()) - 1
             if 0 <= idx < len(sorted_sources):
@@ -181,29 +190,25 @@ def __select_quality(media: MultiSourceMedia, preferred_quality: Optional[str] =
     )
 
 
-def __movie_menu_loop(media, metadata, config, chosen_player):
+def __movie_menu_loop(media, metadata, config):
     """Post-playback menu for movies — ani-cli style fzf menu."""
-    replay_url = media.url
-
     while True:
         choices = "\n".join(["replay", "change_quality", "quit"])
         cmd = __fzf(f"Playing {metadata.title}... ", choices)
 
         if cmd is None:
-            # fzf not available or cancelled — auto-quit
             return
 
         if cmd == "replay":
             print(f"\n  Replaying '{Colours.BLUE.apply(metadata.title)}'...")
-            __play_episode(media, metadata, chosen_player, config)
+            __play_episode(media, metadata)
 
         elif cmd == "change_quality":
             if isinstance(media, MultiSourceMedia):
                 new_media = __select_quality(media, config.quality)
                 if new_media:
                     media = new_media
-                    replay_url = media.url
-                    __play_episode(media, metadata, chosen_player, config)
+                    __play_episode(media, metadata)
             else:
                 print("  Only one quality available.")
 
@@ -214,11 +219,10 @@ def __movie_menu_loop(media, metadata, config, chosen_player):
             print(f"  Unknown option: {cmd}")
 
 
-def __tv_menu_loop(media, metadata, scraper, episode, config, chosen_player):
+def __tv_menu_loop(media, metadata, scraper, episode, config):
     """Post-playback menu for TV series — ani-cli style fzf menu."""
     current_episode = episode.episode
     current_season = episode.season
-    replay_url = media.url
 
     while True:
         choices = "\n".join(["next", "previous", "replay", "select", "change_quality", "quit"])
@@ -236,8 +240,7 @@ def __tv_menu_loop(media, metadata, scraper, episode, config, chosen_player):
                 current_episode -= 1
                 continue
             media = new_media
-            replay_url = media.url
-            __play_episode(media, metadata, chosen_player, config)
+            __play_episode(media, metadata)
 
         elif cmd == "previous":
             if current_episode > 1:
@@ -248,14 +251,13 @@ def __tv_menu_loop(media, metadata, scraper, episode, config, chosen_player):
                     current_episode += 1
                     continue
                 media = new_media
-                replay_url = media.url
-                __play_episode(media, metadata, chosen_player, config)
+                __play_episode(media, metadata)
             else:
                 print("  Already at first episode.")
 
         elif cmd == "replay":
             print(f"\n  Replaying S{current_season:02d}E{current_episode:02d}...")
-            __play_episode(media, metadata, chosen_player, config)
+            __play_episode(media, metadata)
 
         elif cmd == "select":
             new_ep = __select_episode_fzf(current_episode)
@@ -266,16 +268,14 @@ def __tv_menu_loop(media, metadata, scraper, episode, config, chosen_player):
                 if new_media is None:
                     continue
                 media = new_media
-                replay_url = media.url
-                __play_episode(media, metadata, chosen_player, config)
+                __play_episode(media, metadata)
 
         elif cmd == "change_quality":
             if isinstance(media, MultiSourceMedia):
                 new_media = __select_quality(media, config.quality)
                 if new_media:
                     media = new_media
-                    replay_url = media.url
-                    __play_episode(media, metadata, chosen_player, config)
+                    __play_episode(media, metadata)
             else:
                 print("  Only one quality available.")
 
