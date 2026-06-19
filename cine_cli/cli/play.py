@@ -1,61 +1,68 @@
+"""Playback module for cine-cli.
+
+Handles player launch and post-playback menu loop (next/replay/previous/select/quit).
+Designed to replicate ani-cli's playback experience.
+"""
 from __future__ import annotations
-from typing import TYPE_CHECKING, Type, cast
+from typing import TYPE_CHECKING, Type, cast, Optional
+
 import subprocess
 import time
 
-from ..media import Media, Metadata, Multi, Single, MultiSourceMedia
-from ..scraper import Scraper, ScrapeEpisodesT, ScrapeResultT
-from ..players import Player
-from ..utils.platform import SUPPORTED_PLATFORMS
-from ..utils.episode_selector import EpisodeSelector
-
-from typing import Optional, Literal
-
 if TYPE_CHECKING:
+    from typing import Literal
     from ..config import Config
 
 from devgoldyutils import Colours
 
-from .scraper import scrape
-from .episode import handle_episode
-from .watch_options import watch_options
-
-from ..media import MetadataType
+from ..media import Media, Metadata, Multi, Single, MultiSourceMedia, MetadataType
 from ..logger import cine_cli_logger
 from ..cache import Cache
-from ..utils import what_platform, hide_ip
-from ..players import PLAYER_TABLE, CustomPlayer
+from ..utils import what_platform, EpisodeSelector
+from ..players import PLAYER_TABLE, CustomPlayer, Player
 
-def play(media: Media, metadata: Metadata, scraper: Scraper, episode: EpisodeSelector, config: Config) -> Optional[Literal["search"]]:
+
+def play(media: Media, metadata: Metadata, scraper, episode, config) -> Optional[Literal["search"]]:
+    """Main playback loop — launches MPV and shows post-playback menu."""
     platform = what_platform()
     cache = Cache(platform)
-
     cache.set_cache(str(metadata.id), episode.__dict__)
 
     chosen_player = __get_player(config, platform)
 
     # Quality selection for MultiSourceMedia
+    selected_media = media
     if isinstance(media, MultiSourceMedia):
         selected = __select_quality(media, config.quality)
         if selected is None:
             return None
-        media = selected
+        selected_media = selected
 
-    quality_string = ""
-    episode_details_string = ""
+    # Determine if this is TV or movie
+    is_tv = metadata.type == MetadataType.MULTI
 
-    if metadata.type == MetadataType.MULTI:
-        season_string = Colours.CLAY.apply(str(episode.season))
-        episode_string = Colours.ORANGE.apply(str(episode.episode))
+    # Launch MPV
+    popen = __launch_player(selected_media, chosen_player)
 
-        episode_details_string = f"episode {episode_string} in season {season_string} of " if episode.season > 1 else f"episode {episode_string} of "
+    if popen is None:
+        return None
 
-    if config.display_quality:
-        quality = media.get_quality()
+    cine_cli_logger.info(
+        f"Playing '{Colours.BLUE.apply(selected_media.display_name)}' "
+        f"with {chosen_player.display_name}..."
+    )
 
-        if quality is not None:
-            quality_string = f"in {Colours.GREEN.apply(quality.name)} "
+    # Post-playback menu loop (ani-cli style)
+    if is_tv:
+        __tv_menu_loop(selected_media, metadata, scraper, episode, config, chosen_player, popen)
+    else:
+        __movie_menu_loop(selected_media, metadata, scraper, episode, config, chosen_player, popen)
 
+    return None
+
+
+def __launch_player(media: Media, chosen_player) -> Optional[subprocess.Popen]:
+    """Launch the player and return the process handle."""
     try:
         popen = chosen_player.play(media)
 
@@ -66,121 +73,20 @@ def play(media: Media, metadata: Metadata, scraper: Scraper, episode: EpisodeSel
             if command.endswith("xdg-open") or "zen-browser" in command or "firefox" in command or "brave" in command:
                 actual_player = Colours.PURPLE.apply("Browser")
 
-        cine_cli_logger.info(
-            f"Playing {episode_details_string}'{Colours.BLUE.apply(media.title)}' " \
-                f"{quality_string}with {actual_player}..."
-        )
-        cine_cli_logger.debug(f"Called player with these args -> '{hide_ip(' '.join(popen.args), config.hide_ip)}'")
+        cine_cli_logger.debug(f"Called player with these args -> '{' '.join(popen.args) if popen else ''}'")
+        return popen
     except FileNotFoundError as e:
         cine_cli_logger.error(
-            f"The player '{chosen_player.display_name}' was not found! " \
-                f"Are you sure you have it installed? Are you sure it's in path? \\nError: {e}"
+            f"The player '{chosen_player.display_name}' was not found! {e}"
         )
         return None
 
-    if popen is None and platform != "iOS":
-        cine_cli_logger.error(
-            f"The player '{chosen_player.display_name}' is not supported on this platform ({platform}). " \
-                "We recommend VLC for iOS, IINA for MacOS and MPV for every other platform."
-        )
-
-        return None
-
-    if config.watch_options:
-        option = watch_options(popen, chosen_player, platform, media, config.fzf_enabled)
-
-        if option == "next" or option == "previous":
-            popen.kill()
-
-            media_episodes = scraper.scrape_episodes(metadata)
-
-            if option == "next":
-                episode.episode += 1
-            else:
-                episode.episode -= 1
-
-            season_episode_count = media_episodes.get(episode.season)
-
-            if season_episode_count is None:
-                cine_cli_logger.info("No more episodes :(")
-                return None
-
-            result = __handle_next_season(episode, season_episode_count, media_episodes)
-
-            if result is False:
-                cine_cli_logger.info("No more episodes :(")
-                return None
-
-            media = scrape(metadata, episode, scraper)
-
-            return play(media, metadata, scraper, episode, config)
-
-        elif option == "select":
-            popen.kill()
-
-            episode = handle_episode(None, scraper, metadata, config.fzf_enabled, False)
-
-            if episode is None:
-                return None
-
-            media = scrape(metadata, episode, scraper)
-
-            return play(media, metadata, scraper, episode, config)
-
-    # For torrent streams, poll progress and show live stats
-    if popen is not None and "127.0.0.1" in media.url:
-        cine_cli_logger.info("Torrent stream started. Showing download progress...")
-        try:
-            import urllib.request as _urlreq
-            import json as _json
-            status_url = media.url.rstrip("/") + "/status"
-            start_time = time.time()
-            last_progress = -1
-            while popen.poll() is None:
-                time.sleep(3)
-                try:
-                    r = _urlreq.urlopen(status_url, timeout=2)
-                    s = _json.loads(r.read())
-                    progress = s.get("progress", 0)
-                    dl_rate = s.get("download_rate_kb", 0)
-                    peers = s.get("num_peers", 0)
-                    seeds = s.get("num_seeds", 0)
-                    buffered = s.get("buffered_bytes", 0) // 1024
-                    is_ready = s.get("ready", False)
-                    if progress != last_progress or True:
-                        bar_len = 30
-                        filled = int(bar_len * progress / 100) if progress > 0 else 0
-                        bar = "█" * filled + "░" * (bar_len - filled)
-                        elapsed = int(time.time() - start_time)
-                        status_icon = "▶" if is_ready else "⏳"
-                        print(
-                            f"\r  {status_icon} [{bar}] {progress:5.1f}%  "
-                            f"⬇ {dl_rate} KB/s  "
-                            f"💾 {buffered}KB  "
-                            f"👤 {peers}  🌱 {seeds}  "
-                            f"⏱ {elapsed}s",
-                            end="", flush=True,
-                        )
-                        last_progress = progress
-                except Exception:
-                    pass
-            print()
-        except subprocess.TimeoutExpired:
-            print()
-            cine_cli_logger.info("Player still running after timeout. Detaching...")
-    elif popen is not None:
-        popen.wait()
-
-    return None
 
 def __select_quality(media: MultiSourceMedia, preferred_quality: Optional[str] = None) -> Optional[Single]:
-    """Prompt user to select quality for multi-source media.
-
-    Returns a Single media object with the selected URL, or None if cancelled.
-    If preferred_quality is provided and matches an option, auto-selects it.
-    """
+    """Select quality — auto-select best, or use preferred_quality if specified."""
     sources = media.sources
-    if not sources:
+
+    if len(sources) == 0:
         return None
 
     if len(sources) == 1:
@@ -205,7 +111,6 @@ def __select_quality(media: MultiSourceMedia, preferred_quality: Optional[str] =
         pq = preferred_quality.lower()
         for s in sorted_sources:
             if s.get("quality", "").lower() == pq:
-                cine_cli_logger.info(f"  Quality: {Colours.GREEN.apply(s['quality'])} (preferred)")
                 return Single(
                     url=s["url"],
                     title=media.title,
@@ -214,16 +119,13 @@ def __select_quality(media: MultiSourceMedia, preferred_quality: Optional[str] =
                     subtitles=media.subtitles,
                 )
 
+    # Show available qualities
     print(f"\n  {Colours.BLUE.apply(media.display_name)} — {len(sorted_sources)} qualities available:\n")
-
     for i, source in enumerate(sorted_sources, 1):
         quality = source.get("quality", "unknown")
-        url = source["url"]
-        # Show URL domain for clarity
         from urllib.parse import urlparse
-        domain = urlparse(url).netloc
-        marker = " ◄" if preferred_quality and quality.lower() == preferred_quality.lower() else ""
-        print(f"    {Colours.GREEN.apply(str(i))}. {quality:>8}  —  {domain}{marker}")
+        domain = urlparse(source["url"]).netloc
+        print(f"    {Colours.GREEN.apply(str(i))}. {quality:>8}  —  {domain}")
 
     print()
 
@@ -239,39 +141,178 @@ def __select_quality(media: MultiSourceMedia, preferred_quality: Optional[str] =
     )
 
 
-def __get_player(config: Config, platform: SUPPORTED_PLATFORMS) -> Player:
+def __movie_menu_loop(media, metadata, scraper, episode, config, chosen_player, popen):
+    """Post-playback menu for movies: replay, change quality, quit."""
+    replay_url = media.url
+
+    while True:
+        print()
+        cmd = __menu_prompt("Playing movie", ["replay", "change_quality", "quit"])
+
+        if cmd == "replay":
+            print(f"\n  Replaying '{Colours.BLUE.apply(metadata.title)}'...")
+            popen = __launch_player(media, chosen_player)
+            if popen is None:
+                return
+            continue
+
+        elif cmd == "change_quality":
+            if isinstance(media, MultiSourceMedia):
+                new_media = __select_quality(media, config.quality)
+                if new_media:
+                    media = new_media
+                    replay_url = media.url
+                    print(f"\n  Playing with new quality...")
+                    popen = __launch_player(media, chosen_player)
+                    if popen is None:
+                        return
+            else:
+                print("  Only one quality available.")
+            continue
+
+        elif cmd == "quit" or cmd == "q" or cmd is None:
+            print("  Goodbye!")
+            return
+
+        else:
+            print(f"  Unknown option: {cmd}")
+
+
+def __tv_menu_loop(media, metadata, scraper, episode, config, chosen_player, popen):
+    """Post-playback menu for TV series: next, previous, replay, select episode, change quality, quit."""
+    current_episode = episode.episode
+    current_season = episode.season
+
+    while True:
+        print()
+        options = ["next", "previous", "replay", "select_episode", "change_quality", "quit"]
+        cmd = __menu_prompt(
+            f"Playing S{current_season:02d}E{current_episode:02d} of {metadata.title}",
+            options
+        )
+
+        if cmd == "next":
+            current_episode += 1
+            print(f"\n  Playing next episode: S{current_season:02d}E{current_episode:02d}...")
+            new_media = __scrape_episode(scraper, metadata, current_season, current_episode)
+            if new_media is None:
+                print("  No more episodes or failed to fetch. Going back.")
+                current_episode -= 1
+                continue
+            media = new_media
+            popen = __launch_player(media, chosen_player)
+            if popen is None:
+                return
+
+        elif cmd == "previous":
+            if current_episode > 1:
+                current_episode -= 1
+                print(f"\n  Playing previous episode: S{current_season:02d}E{current_episode:02d}...")
+                new_media = __scrape_episode(scraper, metadata, current_season, current_episode)
+                if new_media is None:
+                    print("  Failed to fetch. Going back.")
+                    current_episode += 1
+                    continue
+                media = new_media
+                popen = __launch_player(media, chosen_player)
+                if popen is None:
+                    return
+            else:
+                print("  Already at first episode.")
+
+        elif cmd == "replay":
+            print(f"\n  Replaying S{current_season:02d}E{current_episode:02d}...")
+            popen = __launch_player(media, chosen_player)
+            if popen is None:
+                return
+
+        elif cmd == "select_episode":
+            new_ep = __select_episode_interactive(metadata, current_season, current_episode)
+            if new_ep is not None:
+                current_episode = new_ep
+                print(f"\n  Playing episode {current_episode}...")
+                new_media = __scrape_episode(scraper, metadata, current_season, current_episode)
+                if new_media is None:
+                    print("  Failed to fetch. Going back.")
+                    continue
+                media = new_media
+                popen = __launch_player(media, chosen_player)
+                if popen is None:
+                    return
+
+        elif cmd == "change_quality":
+            if isinstance(media, MultiSourceMedia):
+                new_media = __select_quality(media, config.quality)
+                if new_media:
+                    media = new_media
+                    print(f"\n  Playing with new quality...")
+                    popen = __launch_player(media, chosen_player)
+                    if popen is None:
+                        return
+            else:
+                print("  Only one quality available.")
+            continue
+
+        elif cmd == "quit" or cmd == "q" or cmd is None:
+            print("  Goodbye!")
+            return
+
+        else:
+            print(f"  Unknown option: {cmd}")
+
+
+def __menu_prompt(title: str, options: list) -> Optional[str]:
+    """Show a simple text-based menu prompt."""
+    from devgoldyutils import Colours
+
+    print(f"\n  {Colours.BLUE.apply(title)}")
+    print(f"  Options: {Colours.GREEN.apply(' | '.join(options))}")
+    print()
+
+    try:
+        choice = input("  Enter choice: ").strip().lower()
+        return choice if choice else None
+    except (EOFError, KeyboardInterrupt):
+        return None
+
+
+def __select_episode_interactive(metadata, season: int, current_episode: int) -> Optional[int]:
+    """Let user select a specific episode."""
+    try:
+        ep_input = input(f"  Enter episode number (current: {current_episode}): ").strip()
+        if not ep_input:
+            return None
+        ep_num = int(ep_input)
+        if ep_num < 1:
+            print("  Invalid episode number.")
+            return None
+        return ep_num
+    except (ValueError, EOFError, KeyboardInterrupt):
+        return None
+
+
+def __scrape_episode(scraper, metadata, season: int, episode: int) -> Optional[Media]:
+    """Scrape a specific episode from a TV series."""
+    ep = EpisodeSelector(season=season, episode=episode)
+    media = scraper.scrape(metadata, ep)
+    return media if isinstance(media, (Multi, Single, MultiSourceMedia)) else None
+
+
+def __get_player(config: Config, platform) -> Player:
+    """Get the configured player."""
+    from ..players import Player as PlayerBase
     player = PLAYER_TABLE.get(config.player, CustomPlayer)
 
     if player == CustomPlayer:
         player = cast(Type[CustomPlayer], player)
-
         return player(
-            binary = config.player, 
-            args = config.player_args
+            binary=config.player,
+            args=config.player_args
         )
 
     return player(
-        platform = platform, 
-        args = config.player_args, 
-        debug = config.debug_player, 
-        args_override = config.player_args_override
+        platform=platform,
+        args=config.player_args,
+        debug=config.debug_player,
+        args_override=config.player_args_override,
     )
-
-def __handle_next_season(episode: EpisodeSelector, season_episode_count: int, media_episodes: ScrapeEpisodesT) -> bool:
-
-    if episode.episode > season_episode_count:
-        next_season = episode.season + 1
-
-        if media_episodes.get(next_season) is None:
-            return False
-
-        episode._next_season()
-
-    elif episode.episode <= 1:
-
-        if episode.season <= 1:
-            return False
-
-        episode._previous_season(media_episodes)
-
-    return True
