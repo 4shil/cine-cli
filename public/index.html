@@ -6,25 +6,93 @@
 <title>cine-cli · torrent web</title>
 <script src="/socket.io/socket.io.js"></script>
 <script>
-  // ── Magnet URL ingestion (cine-cli prefills ?magnet= when opening) ───
-  (function ingestMagnet() {
+  // ── Magnet ingestion (runs after DOM is ready) ─────────────────────
+  // Sources, in order of preference:
+  //   1. URL query params    (?magnet=…&name=…)        — works for direct paste/sharing.
+  //   2. Server-side queue   (POST /api/queue/incoming
+  //      from cine-cli's torrent module, then GET here)
+  //   3. Manual paste by user into the input field.
+  //
+  // We do the read after DOMContentLoaded so the input element exists
+  // reliably — the previous head-of-doc IIFE ran while <body> was
+  // unparsed and silently failed to populate the field.
+
+  function parseQuery() {
     const params = new URLSearchParams(location.search);
-    const magnet = params.get('magnet');
-    if (!magnet) return;
+    const hash   = new URLSearchParams(location.hash.startsWith('#') ? location.hash.slice(1) : location.hash);
+    return {
+      magnet: params.get('magnet') || hash.get('magnet') || hash.get('m'),
+      name:   params.get('name')   || hash.get('name')   || hash.get('n') || '',
+    };
+  }
+
+  async function consumeQueue() {
+    try {
+      const r = await fetch('/api/queue/incoming');
+      if (!r.ok) return null;
+      const d = await r.json();
+      return d.magnet || null;
+    } catch { return null; }
+  }
+
+  function fillInput(value) {
+    if (!value) return false;
     const input = document.getElementById('magnet');
-    if (input) {
-      input.value = magnet;
-      // Drop the query so a manual reload doesn't try again.
-      const clean = location.pathname;
-      history.replaceState({}, '', clean);
+    if (!input) return false;
+    input.value = value;
+    return true;
+  }
+
+  function clearUrl() {
+    // Drop magnet-related query and hash so a manual reload doesn't re-add.
+    try {
+      const u = new URL(location.href);
+      u.searchParams.delete('magnet');
+      u.hash = '';
+      history.replaceState({}, '', u.pathname + u.search);
+    } catch {}
+  }
+
+  async function tryAutoAdd() {
+    // 1) URL params.
+    const q = parseQuery();
+    if (q.magnet && q.name) {
+      // wait for input element to exist
+      for (let i = 0; i < 50; i += 1) {
+        if (document.getElementById('magnet')) break;
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      if (fillInput(q.magnet)) {
+        clearUrl();
+        if (typeof addTorrent === 'function') addTorrent();
+        return true;
+      }
     }
-    // Auto-add when there's a magnet in the URL.
-    window.addEventListener('load', () => {
-      // socket.io is loaded immediately after this script, so wait one tick.
-      setTimeout(() => { if (typeof addTorrent === 'function') addTorrent(); }, 0);
-    });
-  })();
+    // 2) Server queue (CLI pre-loaded it).
+    const fromQueue = await consumeQueue();
+    if (fromQueue && fromQueue.magnet) {
+      for (let i = 0; i < 50; i += 1) {
+        if (document.getElementById('magnet')) break;
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      if (fillInput(fromQueue.magnet)) {
+        if (typeof addTorrent === 'function') addTorrent();
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Inline poll on every page so older references run too.
+  window.addEventListener('DOMContentLoaded', () => {
+    tryAutoAdd().catch((e) => console.warn('magnet ingestion failed', e));
+  });
+  // Fallback for browsers/contexts where DOMContentLoaded already fired.
+  if (document.readyState !== 'loading') {
+    tryAutoAdd().catch((e) => console.warn('magnet ingestion failed', e));
+  }
 </script>
+
 
 <style>
   :root {
@@ -376,8 +444,14 @@ function formatEta(ms) {
   return `${s}s`;
 }
 function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, c => ({'&':'&','<':'<','>':'>','"':'"',"'":'''}[c]));
+  return String(s)
+    .replace(/&/g, '\x26amp;')
+    .replace(/</g, '\x26lt;')
+    .replace(/>/g, '\x26gt;')
+    .replace(/"/g, '\x26quot;')
+    .replace(/'/g, '\x26#39;');
 }
+
 
 function render() {
   const el = document.getElementById('list');

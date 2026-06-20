@@ -234,6 +234,26 @@ app.use((req, _res, next) => {
  * Hard root → index.html. We always answer GET / ourselves so that
  * layout variations in the installation tree don't shadow this path.
  */
+// One-shot queue of the magnet the CLI wants the user to start watching.
+// The page GETs it on load — sidesteps any URL-parameter fragility.
+let pendingMagnet = null;
+
+app.post('/api/queue/incoming', (req, res) => {
+  const { magnet, name } = req.body || {};
+  if (typeof magnet !== 'string' || !magnet.startsWith('magnet:')) {
+    return res.status(400).json({ error: 'invalid magnet' });
+  }
+  pendingMagnet = { magnet, name: name || '' };
+  res.json({ ok: true });
+});
+
+app.get('/api/queue/incoming', (_req, res) => {
+  if (!pendingMagnet) return res.json({ magnet: null });
+  const m = pendingMagnet;
+  pendingMagnet = null;
+  return res.json({ magnet: m });
+});
+
 app.get('/', (_req, res) => {
   res.set('Content-Type', 'text/html; charset=utf-8');
   if (HAS_INDEX) {

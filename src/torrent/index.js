@@ -180,6 +180,22 @@ export async function startTorrentWebServerAndOpen({ magnet, name, port = 3737, 
     return { url: null, port: freePort, proc, ready: false };
   }
 
+  // Push the magnet into the server's one-shot queue so the page can
+  // pick it up on load. Belt-and-braces alongside the URL query params:
+  // if the browser opens the magnet-free URL (no ?magnet=… in the bar),
+  // the page still finds the magnet via /api/queue/incoming.
+  try {
+    await fetch(`http://${host}:${freePort}/api/queue/incoming`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ magnet, name }),
+    });
+  } catch (err) {
+    process.stderr.write(`  (warn) queue prefill failed: ${err.message}\n`);
+  }
+
+  // Open with URL params too (most browsers handle them cleanly, and the
+  // page falls back to the queue if params fail).
   const params = new URLSearchParams({ magnet, name });
   const url = `http://${host}:${freePort}/?${params.toString()}`;
   await open(url, { wait: false });
