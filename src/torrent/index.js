@@ -87,20 +87,25 @@ export async function startTorrentWebServerAndOpen({ magnet, name, port = 3737, 
   const here = dirname(fileURLToPath(import.meta.url));
 
   const serverPath = resolve(here, 'server.mjs');
-  const proc = spawn(process.execPath, [serverPath, '--port', String(port)], {
+  const proc = spawn(process.execPath, [serverPath, '--port', String(port), '--host', host], {
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: false,
+    env: { ...process.env, FORCE_COLOR: '0' },
   });
 
   proc.stdout.on('data', (chunk) => process.stdout.write(`  ${chunk}`));
   proc.stderr.on('data', (chunk) => process.stderr.write(`  ${chunk}`));
 
-  await waitForServer(`http://${host}:${port}/`, { timeoutMs: 8000 });
+  const ready = await waitForServer(`http://${host}:${port}/`, { timeoutMs: 8000 });
+  if (!ready) {
+    process.stderr.write(`\n  web torrent server did not become ready on http://${host}:${port} within 8s\n`);
+    return { url: null, proc, ready: false };
+  }
 
   const params = new URLSearchParams({ magnet, name });
   const url = `http://${host}:${port}/?${params.toString()}`;
   await open(url, { wait: false });
-  return { url, proc };
+  return { url, proc, ready: true };
 }
 
 async function waitForServer(url, { timeoutMs = 8000 } = {}) {

@@ -4,13 +4,20 @@
  * Spawned by `cine --download` after the user picks a torrent.
  * Serves the public/ directory, exposes a Socket.io bus for live updates,
  * and accepts new torrents via POST /api/add.
+ *
+ * Note: when cine-cli is installed globally the server's __dirname
+ * resolves to *inside* the package's lib/ tree (e.g.
+ * .../node_modules/cine-cli/lib/torrent/), while public/ ships directly
+ * under the package root. We climb the right number of levels AND
+ * tolerate via a few fallback roots so layout quirks (npm/i/pnpm) don't
+ * 404 the UI.
  */
 
 import express from 'express';
 import { createServer } from 'node:http';
 import { Server as SocketIOServer } from 'socket.io';
 import WebTorrent from 'webtorrent';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -24,16 +31,223 @@ const arg = (name, fallback) => {
 };
 
 const PORT = parseInt(arg('--port', '3737'), 10);
+const HOST = arg('--host', '127.0.0.1');
 const DOWNLOAD_DIR = arg('--dir', path.join(os.homedir(), 'Downloads', 'cine-cli'));
 const MAX_CONCURRENT = 5;
 
+/**
+ * Resolve the public directory.
+ *
+ * Order:
+ *   1. <src>/../../public                       (typical src/ layout)
+ *   2. <src>/../public                          (lib/ layout, e.g. global npm)
+ *   3. <cwd>/public                             (dev convenience)
+ *   4. <src>/public                             (alt layout)
+ * Reject anything outside the package tree bounds if both root options miss.
+ */
+function resolvePublicDir() {
+  const candidates = [
+    path.resolve(__dirname, '..', '..', 'public'), // src/torrent → package root/public
+    path.resolve(__dirname, '..', 'public'),       // lib/torrent → package root/public (alt)
+    path.resolve(process.cwd(), 'public'),
+    path.resolve(__dirname, 'public'),
+  ];
+  for (const p of candidates) {
+    if (existsSync(path.join(p, 'index.html'))) return p;
+  }
+  // Return the first candidate for diagnostic purposes — give the caller a chance
+  // to log if it failed and then fall through to the inline fallback page.
+  return candidates[0];
+}
+
+const PUBLIC_DIR = resolvePublicDir();
+const HAS_INDEX = existsSync(path.join(PUBLIC_DIR, 'index.html'));
 mkdirSync(DOWNLOAD_DIR, { recursive: true });
+
+// Tiny inline UI used as a hard fallback if public/index.html is missing.
+const INLINE_HTML = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>cine-cli · torrent web ui</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter,
+                 system-ui, sans-serif;
+    background: #11111A; color: #E4E4F1;
+    min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    padding: 24px;
+  }
+  main {
+    max-width: 640px; width: 100%;
+    background: #181826; border: 1px solid #2D2D44;
+    border-radius: 14px; padding: 28px 26px;
+  }
+  h1 {
+    background: linear-gradient(120deg, #7C3AED, #EC4899, #22D3EE);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    font-size: 20px; font-weight: 600; margin-bottom: 6px;
+  }
+  p { color: #8B8BA7; font-size: 14px; line-height: 1.55; margin-bottom: 16px; }
+  form { display: flex; gap: 10px; margin-bottom: 18px; }
+  input {
+    flex: 1; background: #11111A; color: #E4E4F1;
+    border: 1px solid #2D2D44; border-radius: 9px;
+    padding: 12px 14px; font-size: 14px;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    outline: none;
+  }
+  input:focus { border-color: #7C3AED; }
+  button {
+    background: linear-gradient(135deg, #7C3AED, #EC4899);
+    color: #fff; border: none; border-radius: 9px;
+    padding: 12px 22px; font-size: 14px; font-weight: 600;
+    cursor: pointer;
+  }
+  button:disabled { opacity: 0.55; cursor: not-allowed; }
+  ul { list-style: none; display: flex; flex-direction: column; gap: 10px; }
+  li {
+    background: #11111A; border: 1px solid #2D2D44;
+    border-radius: 10px; padding: 12px 14px;
+    font-size: 13px;
+  }
+  .bar { height: 6px; background: #1F1F2F; border-radius: 3px; margin: 8px 0; overflow: hidden; }
+  .bar > div { height: 100%; background: linear-gradient(90deg, #7C3AED, #EC4899); }
+  .meta { color: #8B8BA7; font-size: 11px; display: flex; gap: 12px; flex-wrap: wrap; }
+  button.danger {
+    background: transparent; color: #8B8BA7;
+    border: 1px solid #2D2D44; border-radius: 7px;
+    padding: 4px 10px; font-size: 11px; margin-left: 8px;
+  }
+  button.danger:hover { color: #EF4444; border-color: #EF4444; }
+  button.action {
+    background: transparent; color: #8B8BA7;
+    border: 1px solid #2D2D44; border-radius: 7px;
+    padding: 4px 10px; font-size: 11px; margin-left: 4px;
+  }
+  .net { color: #8B8BA7; font-size: 11px; margin-top: 14px; }
+  .net .ok { color: #22C55E; }
+  .net .bad { color: #EF4444; }
+  code { color: #22D3EE; font-size: 11px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>cine-cli · torrent web</h1>
+  <p>Inline fallback UI — the bundled <code>public/index.html</code> was not found at
+     <code>__dirname/public</code>. The page below still uses the real API + Socket.io,
+     so downloads work normally.</p>
+  <form id="form">
+    <input id="magnet" type="text" placeholder="magnet:?xt=urn:btih:…"
+           autocomplete="off" spellcheck="false"/>
+    <button id="add-btn" type="submit">add torrent</button>
+  </form>
+  <ul id="list"></ul>
+  <div class="net" id="net">connecting…</div>
+</main>
+<script src="/socket.io/socket.io.js"></script>
+<script>
+const socket = io();
+const item = (h, t) => {
+  const li = document.createElement('li');
+  const pctEl = document.createElement('div'); pctEl.id = 'pct-' + h;
+  const bar = document.createElement('div');
+  bar.className = 'bar'; const fill = document.createElement('div'); fill.id = 'fill-' + h; fill.style.width = '0%'; bar.appendChild(fill);
+  const meta = document.createElement('div'); meta.className = 'meta'; meta.id = 'meta-' + h;
+  const title = document.createElement('div'); title.id = 'name-' + h; title.textContent = t.name || 'Loading…';
+  li.appendChild(title); li.appendChild(bar); li.appendChild(pctEl); li.appendChild(meta);
+  const actions = document.createElement('div'); actions.style.marginTop = '8px';
+  const pause = document.createElement('button'); pause.className = 'action';
+  pause.textContent = 'pause'; pause.onclick = () => fetch('/api/pause/' + h, {method: 'POST'});
+  const resume = document.createElement('button'); resume.className = 'action';
+  resume.textContent = 'resume'; resume.onclick = () => fetch('/api/resume/' + h, {method: 'POST'});
+  const remove = document.createElement('button'); remove.className = 'danger';
+  remove.textContent = 'remove'; remove.onclick = async () => {
+    await fetch('/api/remove/' + h, {method: 'POST'}); li.remove();
+  };
+  actions.appendChild(pause); actions.appendChild(resume); actions.appendChild(remove);
+  li.appendChild(actions);
+  return li;
+};
+const fmt = (b) => { if(!b) return '0 B'; const u=['B','KB','MB','GB','TB']; let i=0,n=b; while(n>=1024 && i<u.length-1){n/=1024;i++;} return n.toFixed(n<10 && i>0?2:1)+' ' +u[i]; };
+const fmtRate = (b) => b ? fmt(b)+'/s' : '0 B/s';
+
+document.getElementById('form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const m = document.getElementById('magnet').value.trim();
+  if (!m) return;
+  document.getElementById('add-btn').disabled = true;
+  try {
+    const res = await fetch('/api/add', {method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({magnet: m})});
+    document.getElementById('magnet').value = '';
+  } catch {}
+  document.getElementById('add-btn').disabled = false;
+});
+
+socket.on('connect', () => document.getElementById('net').innerHTML = '<span class="ok">live</span> · socket.io');
+socket.on('disconnect', () => document.getElementById('net').innerHTML = '<span class="bad">disconnected</span>');
+socket.on('torrent-list', (list) => {
+  const root = document.getElementById('list');
+  for (const t of list) if (!document.getElementById('pct-' + t.infoHash)) root.appendChild(item(t.infoHash, t));
+});
+socket.on('torrent-update', (list) => {
+  const root = document.getElementById('list');
+  for (const t of list) {
+    if (!document.getElementById('pct-' + t.infoHash)) root.appendChild(item(t.infoHash, t));
+    const pct = Math.round((t.progress || 0) * 100);
+    const fm = document.getElementById('fill-' + t.infoHash);
+    if (fm) fm.style.width = pct + '%';
+    const pctEl = document.getElementById('pct-' + t.infoHash);
+    if (pctEl) pctEl.textContent = pct + '%';
+    const nm = document.getElementById('name-' + t.infoHash);
+    if (nm) nm.textContent = t.name;
+    const meta = document.getElementById('meta-' + t.infoHash);
+    if (meta) meta.innerHTML = '<span>↓ ' + fmtRate(t.downloadSpeed) + '</span>'
+      + '<span>↑ ' + fmtRate(t.uploadSpeed) + '</span>'
+      + '<span>' + (t.numPeers||0) + ' peers</span>'
+      + '<span>' + fmt(t.size||0) + '</span>';
+  }
+});
+</script>
+</body>
+</html>`;
 
 const app = express();
 app.use(express.json());
-app.use(express.static(path.join(__dirname, '..', 'public')));
-// Fallback to public root at the package level too:
-app.use(express.static(path.resolve(process.cwd(), 'public')));
+
+/**
+ * LOG every request with a tiny prefix. Critical when debugging 404s from
+ * upstream cli's "open the browser" hand-off landing on the wrong path.
+ */
+app.use((req, _res, next) => {
+  process.stdout.write(`[req] ${req.method} ${req.url}\n`);
+  next();
+});
+
+/**
+ * Hard root → index.html. We always answer GET / ourselves so that
+ * layout variations in the installation tree don't shadow this path.
+ */
+app.get('/', (_req, res) => {
+  res.set('Content-Type', 'text/html; charset=utf-8');
+  if (HAS_INDEX) {
+    res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
+  } else {
+    process.stdout.write(`[warn] public/index.html missing at ${PUBLIC_DIR}\n`);
+    res.send(INLINE_HTML);
+  }
+});
+
+/**
+ * Static assets from public/ *after* the explicit `/` route. This keeps
+ * other assets (served at /socket.io/... by socket.io itself, /style.css,
+ * future assets) working but doesn't break / routing.
+ */
+if (HAS_INDEX) {
+  app.use(express.static(PUBLIC_DIR, { index: false, fallthrough: true }));
+}
 
 const httpServer = createServer(app);
 const io = new SocketIOServer(httpServer, { cors: { origin: '*' } });
@@ -150,11 +364,12 @@ function shutdown() {
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 
-httpServer.listen(PORT, '127.0.0.1', () => {
+httpServer.listen(PORT, HOST, () => {
   process.stdout.write(`\n  ╭─────────────────────────────────────────────────╮\n`);
   process.stdout.write(`  │  cine-cli  ·  torrent web ui                     │\n`);
-  process.stdout.write(`  │  url: http://127.0.0.1:${PORT}                      │\n`);
+  process.stdout.write(`  │  url: http://${HOST}:${PORT}                        │\n`);
   process.stdout.write(`  │  dir: ${DOWNLOAD_DIR}\n`);
+  process.stdout.write(`  │  ui:  ${HAS_INDEX ? PUBLIC_DIR : 'inline (no public/)'}\n`);
   process.stdout.write(`  ╰─────────────────────────────────────────────────╯\n\n`);
 });
 

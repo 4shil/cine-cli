@@ -5,6 +5,27 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>cine-cli · torrent web</title>
 <script src="/socket.io/socket.io.js"></script>
+<script>
+  // ── Magnet URL ingestion (cine-cli prefills ?magnet= when opening) ───
+  (function ingestMagnet() {
+    const params = new URLSearchParams(location.search);
+    const magnet = params.get('magnet');
+    if (!magnet) return;
+    const input = document.getElementById('magnet');
+    if (input) {
+      input.value = magnet;
+      // Drop the query so a manual reload doesn't try again.
+      const clean = location.pathname;
+      history.replaceState({}, '', clean);
+    }
+    // Auto-add when there's a magnet in the URL.
+    window.addEventListener('load', () => {
+      // socket.io is loaded immediately after this script, so wait one tick.
+      setTimeout(() => { if (typeof addTorrent === 'function') addTorrent(); }, 0);
+    });
+  })();
+</script>
+
 <style>
   :root {
     --bg: #11111A;
