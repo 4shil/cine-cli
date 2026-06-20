@@ -10,10 +10,10 @@ import { Command } from 'commander';
 import process from 'node:process';
 import os from 'node:os';
 
-import { showBanner, showSearchHeader, showResultCount } from './ui/banner.js';
-import { theme, sym, hr } from './ui/theme.js';
+import { showBanner, showSearchHeader } from './ui/banner.js';
+import { theme, sym } from './ui/theme.js';
 import { makeSpinner } from './ui/spinner.js';
-import { textSearch, confirm, selectProvider, pickResult, pickNumber, hasFzf } from './ui/prompts.js';
+import { textSearch, selectProvider, pickResult, pickNumber, hasFzf } from './ui/prompts.js';
 import { searchAll, resolveProviders } from './scraper.js';
 import { playInBrowser } from './play.js';
 import { fetchStreams, startTorrentWebServerAndOpen } from './torrent/index.js';
@@ -45,7 +45,10 @@ program
   .option('--provider <id>', 'Skip provider picker, use this provider id directly')
   .option('--list-providers', 'Print known providers and exit')
   .option('--smoke', 'Run full flow in non-interactive mode without spawning a browser (verification)')
+  .option('--fzf', 'Use fzf for picker UIs (off by default — @clack/prompts is more reliable)')
   .action(async (queryParts, opts) => {
+    // Honour --fzf flag by setting the opt-in env var.
+    if (opts.fzf) process.env.FZF_PICKER = '1';
     if (opts.color === false) {
       theme.chalk.level = 0;
     }
@@ -97,11 +100,11 @@ async function runFlow(query, opts, { isTTY }) {
   console.log(showSearchHeader(query));
   console.log('');
 
-  const spin = makeSpinner(theme.dim('searching TMDB · ' + sym.dot.repeat(0)));
+  const spin = makeSpinner(theme.dim('searching TMDB'));
   let results;
   try {
     results = await searchAll(query, { limit: 12 });
-    spin.stop(theme.dim(`${results.length} results`));
+    spin.stop(theme.dim(`${results.length} matches`));
   } catch (err) {
     spin.cancel(theme.error('search failed'));
     console.error(`  ${theme.dim(err.message)}`);
@@ -111,7 +114,7 @@ async function runFlow(query, opts, { isTTY }) {
     console.log(`  ${theme.warn(sym.bullet)} ${theme.fg('no matches.')}  ${theme.dim('try a different query.')}`);
     return;
   }
-  console.log(`  ${showResultCount(results.length)}`);
+  // No second "X results" line — the spinner already subtitled that.
 
   // Pick a result.
   let pickedIdx = null;

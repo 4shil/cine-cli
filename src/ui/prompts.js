@@ -1,17 +1,17 @@
 /**
  * Prompt helpers — search input, select pickers.
  *
- * Uses @clack/prompts for inputs/text, and prefers fzf for selects
- * (visual maturity) with a clack fallback when fzf is missing or the
- * process is non-interactive.
+ * Prefers @clack/prompts for selects: it handles raw-mode, term escape codes,
+ * partial-line redrawing, and cancellation uniformly. fzf is great for
+ * power users but only safe in real PTYs (xterm.js-backed panes can cause
+ * it to die immediately with no selection), so we use it as an optional
+ * enhancement via `FZF_PICKER=1` or when an explicit `--fzf` flag passes.
  */
 
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import * as p from '@clack/prompts';
-
-import { theme } from './theme.js';
 
 let _hasFzf = null;
 export function hasFzf() {
@@ -25,7 +25,21 @@ export function hasFzf() {
 }
 
 /**
- * textSearch — prompt for a free-form search string with a default value.
+ * Whether to use fzf for selects. Default: NEVER — clack.prompts is more
+ * reliable across terminal panes (Hermes's embedded xterm.js, VSCode
+ * terminal, etc.). fzf is great in real PTYs but its pipe-mode runtime
+ * often exits with no selection when the host terminal is shimmed, which
+ * is what produced the false "cancelled" loop in the screenshot.
+ *
+ * Opt-in: set `FZF_PICKER=1` or pass `--fzf`. Even then we still fall back
+ * to clack if fzf dies without selecting.
+ */
+function preferFzf() {
+  return process.env.FZF_PICKER === '1' && hasFzf() && !!process.stdin.isTTY;
+}
+
+/**
+ * textSearch — prompt for a free-form search string.
  */
 export async function textSearch({ message, defaultValue = '', placeholder } = {}) {
   const value = await p.text({
@@ -33,14 +47,12 @@ export async function textSearch({ message, defaultValue = '', placeholder } = {
     defaultValue,
     placeholder,
   });
-  if (p.isCancel(value)) {
-    return null;
-  }
+  if (p.isCancel(value)) return null;
   return String(value || '').trim();
 }
 
 /**
- * confirm — yes/no confirm with cool default.
+ * confirm — yes/no confirm.
  */
 export async function confirm({ message, initialValue = true }) {
   const value = await p.confirm({ message, initialValue });
@@ -49,58 +61,51 @@ export async function confirm({ message, initialValue = true }) {
 }
 
 /**
- * selectServer — provider picker with highlighting.
- * items: [{ label, hint?, value }]
+ * Unwrap a clack select. If the user cancels, returns the default value
+ * (first item). If they actually chose something, returns the choice.
+ */
+async function runSelect({ message, items, defaultIndex = 0 }) {
+  const choice = await p.select({
+    message,
+    options: items.map((it) => ({
+      label: it.label,
+      value: it.value,
+      hint: it.hint,
+    })),
+    initialValue: items[defaultIndex]?.value,
+  });
+  if (p.isCancel(choice)) return items[defaultIndex]?.value ?? null;
+  return choice;
+}
+
+/**
+ * Provider picker. Falls back to the default if cancelled — Cancelling
+ * a provider picker is rarely what the user wanted; they probably hit Esc
+ * instinctively.
  */
 export async function selectProvider({ message, items, defaultIndex = 0 }) {
   if (!items.length) return null;
-
-  if (hasFzf() && process.stdin.isTTY) {
+  if (preferFzf()) {
     const value = pickWithFzf(message, items, defaultIndex);
     if (value !== null) return value;
-    // fall through to clack if user cancelled
   }
-
-  const choice = await p.select({
-    message,
-    options: items.map((it) => ({
-      label: it.label,
-      value: it.value,
-      hint: it.hint,
-    })),
-    initialValue: items[defaultIndex]?.value,
-  });
-
-  if (p.isCancel(choice)) return null;
-  return choice;
+  return runSelect({ message, items, defaultIndex });
 }
 
 /**
- * pickResult — search-result picker with type hints.
+ * Search-result picker. Same cancel-falls-back-to-default behaviour.
  */
 export async function pickResult({ message, items, defaultIndex = 0 }) {
   if (!items.length) return null;
-
-  if (hasFzf() && process.stdin.isTTY) {
+  if (preferFzf()) {
     const value = pickWithFzf(message, items, defaultIndex);
     if (value !== null) return value;
   }
-
-  const choice = await p.select({
-    message,
-    options: items.map((it) => ({
-      label: it.label,
-      value: it.value,
-      hint: it.hint,
-    })),
-    initialValue: items[defaultIndex]?.value,
-  });
-  if (p.isCancel(choice)) return null;
-  return choice;
+  return runSelect({ message, items, defaultIndex });
 }
 
 /**
- * pickNumber — small numeric picker (e.g. season/episode).
+ * pickNumber — small numeric picker (season/episode).
  */
 export async function pickNumber({ message, min, max, defaultValue }) {
   const def = clamp(defaultValue ?? min, min, max);
@@ -124,36 +129,44 @@ function clamp(n, lo, hi) {
 }
 
 /**
- * pickWithFzf — runs fzf with formatted lines and returns the matched value.
- * items need { label, value, hint? }.
+ * pickWithFzf — runs fzf in pipe mode with our candidates fed on stdin,
+ * and reads the highlighted line from stdout.
  *
- * Returns null when fzf is cancelled (Esc) or no match.
+ * fzf assumes real PTY semantics for both the parent process and its own
+ * child; CR-based cursor redrawing from xterm.js-shimmed panes can cause
+ * fzf to void the selection. We don't expose this by default — `FZF_PICKER=1`
+ * opts in.
  */
-function pickWithFzf(message, items, defaultIndex = 0) {
+function pickWithFzf(message, items) {
   return new Promise((resolve) => {
-    const lines = items.map((it, i) => it.hint ? `${it.label} — ${it.hint}` : it.label);
+    const lines = items.map((it) => it.hint ? `${it.label} — ${it.hint}` : it.label);
+
     const proc = spawn('fzf', [
       '--reverse',
-      '--cycle',
-      '--prompt', `${message} › `,
       '--no-sort',
       '--height', '40%',
-      '--info', 'inline',
-      '--header', `[ ${items.length} options · Enter to select · Esc to cancel ]`,
-    ], { stdio: ['pipe', 'pipe', 'inherit'] });
+      '--prompt', `${message} › `,
+      '--header', `${items.length} options · enter accept · esc cancel`,
+      '--bind', 'start:up',           // start on the highlighted (top) line
+      '--bind', 'enter:accept-non-empty',
+      '--print0',                       // null-separated output to avoid trailing-newline issues
+    ], { stdio: ['pipe', 'pipe', 'pipe'] });
 
     let out = '';
     proc.stdout.on('data', (chunk) => { out += chunk.toString(); });
+    proc.stderr.on('data', () => {}); // swallow fzf's terminal noise
     proc.on('error', () => resolve(null));
     proc.on('close', (code) => {
       if (code !== 0) return resolve(null);
-      const picked = out.toString().trim();
+      const picked = out.toString().replace(/\0+$/, '').trim();
       if (!picked) return resolve(null);
-      const idx = lines.findIndex((l) => l === picked);
+      // match prefix-tolerant in case of chop
+      const idx = lines.findIndex((l) => l === picked || l.startsWith(picked));
       if (idx === -1) return resolve(null);
       resolve(items[idx].value);
     });
 
+    proc.stdin.on('error', () => {});
     proc.stdin.write(lines.join('\n') + '\n');
     proc.stdin.end();
   });
