@@ -97,7 +97,9 @@ src/
     └── prompts.js       search input + provider picker (fzf when available, clack fallback)
 
 public/
-└── index.html           torrent web UI (WebTorrent in browser via WebRTC)
+└── index.html           torrent runtime UI shell
+└── styles.css           terminal-style themes + tokens (dark / light)
+└── app.js               GSAP-driven UI + socket.io realtime stream
 ```
 
 Pure Node.js + native `fetch` from undici. No bundler, no transpilation, single `package.json`.
