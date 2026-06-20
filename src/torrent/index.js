@@ -1,9 +1,15 @@
 /**
  * torrent/index.js — fetch torrents from Torrentio + sort by seeders.
+ *
+ * Plus the embedded server lifecycle:
+ *   startTorrentWebServerAndOpen() spawns the server, picks a free port if
+ *   the requested one is busy, waits for / to respond 200, opens the
+ *   browser with the magnet preloaded, and returns status for the caller.
  */
 
 import { fetch } from 'undici';
 import open from 'open';
+import { createServer } from 'node:net';
 
 const BASE = 'https://torrentio.strem.fun';
 const CONFIG = 'providers=yts,eztv,rarbg,1337x,thepiratebay|qualityfilter=480p,720p,1080p|sort=qualitysize';
@@ -48,6 +54,12 @@ export class TorrentStream {
   }
 }
 
+TorrentStream.prototype.fileSizeLabel = function () {
+  if (!this.size) return '—';
+  if (this.size >= 1024) return `${(this.size / 1024).toFixed(1)} GB`;
+  return `${this.size} MB`;
+};
+
 export async function fetchStreams({ imdbId, type = 'movie', season = 1, episode = 1 } = {}) {
   if (!imdbId) return [];
   const url = apiUrl({ imdbId, type, season, episode });
@@ -66,58 +78,125 @@ export async function fetchStreams({ imdbId, type = 'movie', season = 1, episode
 }
 
 /**
- * Pretty label for the torrent UI: "1.4 GB" / "640 MB" / "—".
+ * probePort(host, port) — return true if `port` on `host` answers a TCP
+ * connect within `timeoutMs`. We use it twice:
+ *   1. before spawning the server, to see if *something* is already
+ *      serving on it (we then pick a fresh port)
+ *   2. after spawn-returns-OK, to detect that the *child* actually bound.
  */
-TorrentStream.prototype.fileSizeLabel = function () {
-  if (!this.size) return '—';
-  if (this.size >= 1024) return `${(this.size / 1024).toFixed(1)} GB`;
-  return `${this.size} MB`;
-};
+function probePort(host, port, timeoutMs = 1500) {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (taken) => {
+      if (done) return;
+      done = true;
+      resolve(taken);
+    };
+    const sock = createServer();
+    const timer = setTimeout(() => finish(true), timeoutMs);
+    sock.once('error', () => { clearTimeout(timer); finish(true); });
+    sock.once('listening', () => {
+      sock.close(() => { clearTimeout(timer); finish(false); });
+    });
+    sock.listen(port, host);
+  });
+}
+
+/**
+ * Pick a free port on host. Tries the requested port first, then walks up
+ * to +N. Caps so we don't pin forever on a saturated host.
+ */
+async function pickFreePort(host, basePort, maxTries = 10) {
+  for (let i = 0; i < maxTries; i += 1) {
+    const candidate = basePort + i;
+    const taken = await probePort(host, candidate);
+    if (!taken) return candidate;
+  }
+  throw new Error(`could not find a free port on ${host} near ${basePort}`);
+}
 
 /**
  * Start the embedded WebTorrent web server, wait for it to be ready,
  * open the browser with the magnet URL prefilled.
  *
- * Health-check loop uses an HTTP GET to / (returns 200 once listening).
+ * Behaviour:
+ *   - If `port` is busy, picks the next free one immediately
+ *   - If the child process fails to bind (e.g. race condition where
+ *     another process grabs the port after our probe but before our
+ *     spawn), we surface that as `ready: false` *and* attach a
+ *     non-fatal error handler to the child so Node won't crash.
+ *   - Returns `{url, port, proc, ready}`. Callers MUST check `ready`
+ *     before advertising a URL.
  */
-export async function startTorrentWebServerAndOpen({ magnet, name, port = 3737, host = '127.0.0.1' }) {
+export async function startTorrentWebServerAndOpen({ magnet, name, port = 3737, host = '127.0.0.1' } = {}) {
   const { spawn } = await import('node:child_process');
   const { fileURLToPath } = await import('node:url');
   const { dirname, resolve } = await import('node:path');
   const here = dirname(fileURLToPath(import.meta.url));
 
   const serverPath = resolve(here, 'server.mjs');
-  const proc = spawn(process.execPath, [serverPath, '--port', String(port), '--host', host], {
+
+  // Probe & pick a free port BEFORE spawning anything. If the default port
+  // is busy (some previous cine still holding it), immediately try 3738,
+  // 3739, etc. — transparent.
+  const freePort = await pickFreePort(host, port);
+  if (freePort !== port) {
+    process.stdout.write(`\n  port ${port} busy — switched to ${freePort}\n`);
+  }
+
+  const proc = spawn(process.execPath, [serverPath, '--port', String(freePort), '--host', host], {
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: false,
     env: { ...process.env, FORCE_COLOR: '0' },
   });
 
+  // Don't let the spawned child's own errors crash our parent.
+  proc.on('error', (err) => {
+    process.stderr.write(`\n  spawn failed: ${err.message}\n`);
+  });
+
+  let childExited = false;
+  let childExitInfo = null;
+  proc.on('exit', (code, signal) => {
+    childExited = true;
+    childExitInfo = { code, signal };
+  });
+
   proc.stdout.on('data', (chunk) => process.stdout.write(`  ${chunk}`));
   proc.stderr.on('data', (chunk) => process.stderr.write(`  ${chunk}`));
 
-  const ready = await waitForServer(`http://${host}:${port}/`, { timeoutMs: 8000 });
+  const ready = await waitForServer(`http://${host}:${freePort}/`, {
+    timeoutMs: 6000,
+    intervalMs: 150,
+    onPoll: () => childExited,
+  });
+
   if (!ready) {
-    process.stderr.write(`\n  web torrent server did not become ready on http://${host}:${port} within 8s\n`);
-    return { url: null, proc, ready: false };
+    let why = `web torrent server did not become ready on http://${host}:${freePort} within 6s`;
+    if (childExited) {
+      why += ` (child exited: ${JSON.stringify(childExitInfo)})`;
+    }
+    process.stderr.write(`\n  ${why}\n`);
+    return { url: null, port: freePort, proc, ready: false };
   }
 
   const params = new URLSearchParams({ magnet, name });
-  const url = `http://${host}:${port}/?${params.toString()}`;
+  const url = `http://${host}:${freePort}/?${params.toString()}`;
   await open(url, { wait: false });
-  return { url, proc, ready: true };
+  return { url, port: freePort, proc, ready: true };
 }
 
-async function waitForServer(url, { timeoutMs = 8000 } = {}) {
+async function waitForServer(url, { timeoutMs = 6000, intervalMs = 200, onPoll } = {}) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
+    if (typeof onPoll === 'function' && onPoll()) return false;
     try {
       const res = await fetch(url);
       if (res.ok || res.status === 304) return true;
     } catch {
       // not yet
     }
-    await new Promise((r) => setTimeout(r, 200));
+    await new Promise((r) => setTimeout(r, intervalMs));
   }
   return false;
 }

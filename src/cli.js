@@ -40,6 +40,7 @@ program
   .option('-c, --choice <n>', 'Auto-select result index (1-based) and skip prompt')
   .option('-d, --download', 'Open torrent web downloader instead of streaming in browser')
   .option('-p, --player <name>', 'Override player (browser default)')
+  .option('--port <n>', 'Override the torrent web server port (default 3737)', (v) => parseInt(v, 10), 3737)
   .option('--no-banner', 'Skip the welcome banner')
   .option('--no-color', 'Disable colour output')
   .option('--provider <id>', 'Skip provider picker, use this provider id directly')
@@ -263,14 +264,24 @@ async function runTorrentFlow({ item, resolved, pick }, opts) {
     return;
   }
 
-  await startTorrentWebServerAndOpen({
+  const { url, port, ready } = await startTorrentWebServerAndOpen({
     magnet: chosen.magnet,
     name: chosen.name,
-    port: 3737,
+    port: opts.port ?? 3737,
   });
+
+  if (!ready) {
+    console.log('');
+    console.log(`  ${theme.error(sym.cross)} ${theme.fg('web ui could not start — all the usual ports are busy.')}`);
+    console.log(`  ${theme.dim(sym.dot)} ${theme.dim('try: cine "title" --download --port 4800')}`);
+    console.log('');
+    return;
+  }
+
   console.log('');
-  console.log(`  ${theme.dim(sym.dot)} web ui:    ${theme.cold('http://127.0.0.1:3737')}`);
+  console.log(`  ${theme.dim(sym.dot)} web ui:    ${theme.cold(`http://127.0.0.1:${port}`)}`);
   console.log(`  ${theme.dim(sym.dot)} downloads: ${theme.dim(process.env.HOME + '/Downloads/cine-cli')}`);
+  if (url) console.log(`  ${theme.dim(sym.dot)} magnet:    ${theme.dim(url)}`);
   console.log('');
   console.log(`  ${theme.dim(sym.arrow)} ${theme.dim('press Ctrl+C to stop the server')}`);
   console.log('');
