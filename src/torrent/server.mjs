@@ -340,7 +340,12 @@ app.post('/api/add', async (req, res) => {
   }
   torrents.set(resolvedHash, {
     torrent: t,
-    meta: { name: name || t.name || 'Loading...', infoHash: resolvedHash, addedAt: Date.now() },
+    meta: {
+      name: name || t.name || 'Loading...',
+      infoHash: resolvedHash,
+      magnet,                     // remember original magnet for "copy"
+      addedAt: Date.now(),
+    },
   });
 
   // Backfill name/size once they're known.
@@ -370,6 +375,32 @@ app.get('/api/torrents', (_req, res) => {
   res.json(list);
 });
 
+/**
+ * /api/info     → server/runtime info (download dir, version, count).
+ * /api/info/:h  → per-torrent info incl. magnet URI for the copy button.
+ */
+app.get('/api/info', (_req, res) => {
+  res.json({
+    downloadDir: DOWNLOAD_DIR,
+    version: '1',
+    port: PORT,
+    torrents: torrents.size,
+  });
+});
+
+app.get('/api/info/:hash', (req, res) => {
+  const h = String(req.params.hash || '').toLowerCase();
+  const e = torrents.get(h);
+  if (!e) return res.status(404).json({ error: 'not found' });
+  res.json({
+    infoHash: h,
+    name: e.meta.name,
+    magnet: e.meta.magnet || ('magnet:?xt=urn:btih:' + h),
+    size:   e.torrent.length || e.meta.size || 0,
+    peers:  e.torrent.numPeers || 0,
+  });
+});
+
 app.post('/api/pause/:hash', (req, res) => {
   const entry = torrents.get(req.params.hash.toLowerCase());
   if (!entry) return res.status(404).json({ error: 'not found' });
@@ -392,7 +423,40 @@ app.post('/api/remove/:hash', (req, res) => {
 
 io.on('connection', (socket) => {
   socket.emit('torrent-list', Array.from(torrents.values()).map(({ torrent, meta }) => payload(torrent, meta)));
+  socket.emit('runtime', { kind: 'info', msg: 'client connected  ·  ' + (socket.id || '?').slice(0, 8) });
+
+  // Socket.io-driven pause / resume / remove (the UI uses these now).
+  socket.on('pause',  (hash) => {
+    const e = lookUp(hash);
+    if (!e) return socket.emit('runtime', { kind: 'warn', msg: 'pause: not found  ·  ' + (hash || '').slice(0, 8) });
+    e.torrent.pause();
+    socket.emit('runtime', { kind: 'info', msg: 'paused  ·  ' + (e.meta.name || hash).slice(0, 32) });
+  });
+  socket.on('resume', (hash) => {
+    const e = lookUp(hash);
+    if (!e) return socket.emit('runtime', { kind: 'warn', msg: 'resume: not found  ·  ' + (hash || '').slice(0, 8) });
+    e.torrent.resume();
+    socket.emit('runtime', { kind: 'info', msg: 'resumed  ·  ' + (e.meta.name || hash).slice(0, 32) });
+  });
+  socket.on('remove', (hash) => {
+    const e = lookUp(hash);
+    if (!e) return socket.emit('runtime', { kind: 'warn', msg: 'remove: not found  ·  ' + (hash || '').slice(0, 8) });
+    try { e.torrent.destroy(); } catch {}
+    torrents.delete((e.meta.infoHash || hash || '').toLowerCase());
+    io.emit('torrent-update', []); // wake up the page
+    io.emit('runtime', { kind: 'info', msg: 'removed  ·  ' + (e.meta.name || hash).slice(0, 32) });
+  });
+
+  socket.on('disconnect', () => {
+    io.emit('runtime', { kind: 'warn', msg: 'client disconnected  ·  ' + (socket.id || '?').slice(0, 8) });
+  });
 });
+
+function lookUp(hash) {
+  if (typeof hash !== 'string') return null;
+  const e = torrents.get(hash.toLowerCase());
+  return e || null;
+}
 
 setInterval(() => {
   if (!torrents.size) return;

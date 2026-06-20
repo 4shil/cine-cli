@@ -1,524 +1,118 @@
-<!DOCTYPE html>
-<html lang="en">
+<!doctype html>
+<html lang="en" data-theme="dark">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>cine-cli · torrent web</title>
-<script src="/socket.io/socket.io.js"></script>
-<script>
-  // ── Magnet ingestion (runs after DOM is ready) ─────────────────────
-  // Sources, in order of preference:
-  //   1. URL query params    (?magnet=…&name=…)        — works for direct paste/sharing.
-  //   2. Server-side queue   (POST /api/queue/incoming
-  //      from cine-cli's torrent module, then GET here)
-  //   3. Manual paste by user into the input field.
-  //
-  // We do the read after DOMContentLoaded so the input element exists
-  // reliably — the previous head-of-doc IIFE ran while <body> was
-  // unparsed and silently failed to populate the field.
-
-  function parseQuery() {
-    const params = new URLSearchParams(location.search);
-    const hash   = new URLSearchParams(location.hash.startsWith('#') ? location.hash.slice(1) : location.hash);
-    return {
-      magnet: params.get('magnet') || hash.get('magnet') || hash.get('m'),
-      name:   params.get('name')   || hash.get('name')   || hash.get('n') || '',
-    };
-  }
-
-  async function consumeQueue() {
-    try {
-      const r = await fetch('/api/queue/incoming');
-      if (!r.ok) return null;
-      const d = await r.json();
-      return d.magnet || null;
-    } catch { return null; }
-  }
-
-  function fillInput(value) {
-    if (!value) return false;
-    const input = document.getElementById('magnet');
-    if (!input) return false;
-    input.value = value;
-    return true;
-  }
-
-  function clearUrl() {
-    // Drop magnet-related query and hash so a manual reload doesn't re-add.
-    try {
-      const u = new URL(location.href);
-      u.searchParams.delete('magnet');
-      u.hash = '';
-      history.replaceState({}, '', u.pathname + u.search);
-    } catch {}
-  }
-
-  async function tryAutoAdd() {
-    // 1) URL params.
-    const q = parseQuery();
-    if (q.magnet && q.name) {
-      // wait for input element to exist
-      for (let i = 0; i < 50; i += 1) {
-        if (document.getElementById('magnet')) break;
-        await new Promise((r) => setTimeout(r, 20));
-      }
-      if (fillInput(q.magnet)) {
-        clearUrl();
-        if (typeof addTorrent === 'function') addTorrent();
-        return true;
-      }
-    }
-    // 2) Server queue (CLI pre-loaded it).
-    const fromQueue = await consumeQueue();
-    if (fromQueue && fromQueue.magnet) {
-      for (let i = 0; i < 50; i += 1) {
-        if (document.getElementById('magnet')) break;
-        await new Promise((r) => setTimeout(r, 20));
-      }
-      if (fillInput(fromQueue.magnet)) {
-        if (typeof addTorrent === 'function') addTorrent();
-        return true;
-      }
-    }
-    return false;
-  }
-
-  // Inline poll on every page so older references run too.
-  window.addEventListener('DOMContentLoaded', () => {
-    tryAutoAdd().catch((e) => console.warn('magnet ingestion failed', e));
-  });
-  // Fallback for browsers/contexts where DOMContentLoaded already fired.
-  if (document.readyState !== 'loading') {
-    tryAutoAdd().catch((e) => console.warn('magnet ingestion failed', e));
-  }
-</script>
-
-
-<style>
-  :root {
-    --bg: #11111A;
-    --surface: #181826;
-    --surface-2: #1F1F2F;
-    --border: #2D2D44;
-    --fg: #E4E4F1;
-    --fg-dim: #8B8BA7;
-    --mute: #4B4B66;
-    --brand: #7C3AED;
-    --brand-2: #EC4899;
-    --cool: #22D3EE;
-    --ok: #22C55E;
-    --warn: #F59E0B;
-    --err: #EF4444;
-  }
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
-                 'Inter', system-ui, sans-serif;
-    background: var(--bg);
-    color: var(--fg);
-    min-height: 100vh;
-    display: flex; flex-direction: column;
-    -webkit-font-smoothing: antialiased;
-  }
-  header {
-    background: var(--surface);
-    border-bottom: 1px solid var(--border);
-    padding: 14px 24px;
-    display: flex; align-items: center; gap: 14px;
-  }
-  header .logo {
-    width: 36px; height: 36px;
-    background: linear-gradient(135deg, var(--brand), var(--brand-2));
-    border-radius: 9px;
-    display: flex; align-items: center; justify-content: center;
-  }
-  header .logo svg { width: 18px; height: 18px; stroke: white; fill: none; stroke-width: 2.4; }
-  header h1 { font-size: 17px; font-weight: 600; letter-spacing: 0.2px; }
-  header h1 .accent {
-    background: linear-gradient(120deg, var(--brand), var(--brand-2), var(--cool));
-    -webkit-background-clip: text; background-clip: text; color: transparent;
-  }
-  header .status {
-    margin-left: auto; font-size: 12px; color: var(--fg-dim);
-    display: flex; align-items: center; gap: 8px;
-  }
-  header .status .dot {
-    width: 8px; height: 8px; border-radius: 50%; background: var(--err);
-    box-shadow: 0 0 0 4px rgba(239,68,68,0.15);
-  }
-  header .status .dot.live { background: var(--ok); box-shadow: 0 0 0 4px rgba(34,197,94,0.18); }
-
-  main {
-    flex: 1; max-width: 880px; width: 100%;
-    margin: 0 auto; padding: 28px 24px 80px;
-  }
-
-  /* Card — add magnet */
-  .add {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 18px;
-    margin-bottom: 28px;
-  }
-  .add label {
-    display: block; font-size: 11px; font-weight: 600;
-    color: var(--fg-dim); letter-spacing: 0.8px;
-    text-transform: uppercase; margin-bottom: 10px;
-  }
-  .row { display: flex; gap: 10px; }
-  .row input {
-    flex: 1; background: var(--bg);
-    border: 1px solid var(--border); border-radius: 8px;
-    padding: 12px 14px; color: var(--fg); font-size: 14px;
-    font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
-    outline: none; transition: border-color 0.15s ease;
-  }
-  .row input:focus { border-color: var(--brand); }
-  .row input::placeholder { color: var(--mute); }
-  .row button {
-    background: linear-gradient(135deg, var(--brand), var(--brand-2));
-    color: white; border: none; border-radius: 8px;
-    padding: 12px 22px; font-size: 14px; font-weight: 600;
-    cursor: pointer; transition: transform 0.1s, opacity 0.15s;
-    white-space: nowrap; letter-spacing: 0.2px;
-  }
-  .row button:hover { transform: translateY(-1px); }
-  .row button:active { transform: translateY(0); }
-  .row button:disabled { opacity: 0.55; cursor: not-allowed; transform: none; }
-
-  /* Section heading */
-  .head {
-    display: flex; align-items: baseline; justify-content: space-between;
-    margin-bottom: 14px;
-  }
-  .head h2 {
-    font-size: 13px; font-weight: 600;
-    color: var(--fg-dim); letter-spacing: 0.6px;
-    text-transform: uppercase;
-  }
-  .head .count {
-    font-size: 12px; color: var(--fg-dim);
-    background: var(--surface);
-    border: 1px solid var(--border);
-    padding: 4px 12px; border-radius: 999px;
-  }
-
-  /* Empty */
-  .empty {
-    text-align: center; padding: 80px 20px;
-    color: var(--fg-dim);
-    background: var(--surface);
-    border: 1px dashed var(--border);
-    border-radius: 12px;
-  }
-  .empty .icon {
-    width: 56px; height: 56px; border-radius: 12px;
-    background: var(--bg); border: 1px solid var(--border);
-    display: flex; align-items: center; justify-content: center;
-    margin: 0 auto 16px;
-    color: var(--cool);
-  }
-  .empty p { font-size: 14px; }
-  .empty .hint { font-size: 12px; color: var(--mute); margin-top: 6px; }
-
-  /* Torrent list */
-  .list { display: flex; flex-direction: column; gap: 12px; }
-  .card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 16px;
-    transition: border-color 0.15s;
-  }
-  .card:hover { border-color: #404060; }
-  .card.done { border-color: rgba(34,197,94,0.35); }
-  .card.paused { border-color: rgba(245,158,11,0.35); }
-
-  .card .top { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 12px; }
-  .card .name {
-    font-size: 14px; font-weight: 500; flex: 1;
-    word-break: break-word; line-height: 1.35;
-  }
-  .badge {
-    font-size: 10px; padding: 3px 9px; border-radius: 999px;
-    font-weight: 700; letter-spacing: 0.4px;
-    text-transform: uppercase; white-space: nowrap;
-  }
-  .badge.dl  { background: rgba(124,58,237,0.18); color: var(--brand); }
-  .badge.ok  { background: rgba(34,197,94,0.18);  color: var(--ok); }
-  .badge.warn{ background: rgba(245,158,11,0.18); color: var(--warn); }
-  .badge.err { background: rgba(239,68,68,0.18);  color: var(--err); }
-
-  .progress { margin-bottom: 10px; }
-  .progress .bar {
-    width: 100%; height: 6px; background: var(--bg);
-    border-radius: 3px; overflow: hidden;
-  }
-  .progress .fill {
-    height: 100%; border-radius: 3px;
-    background: linear-gradient(90deg, var(--brand), var(--brand-2));
-    transition: width 0.3s ease;
-  }
-  .progress .fill.done { background: var(--ok); }
-  .progress .meta {
-    display: flex; justify-content: space-between;
-    font-size: 11px; color: var(--fg-dim);
-    margin-top: 6px; font-variant-numeric: tabular-nums;
-  }
-
-  .stats {
-    display: flex; flex-wrap: wrap; gap: 18px;
-    font-size: 12px; color: var(--fg-dim);
-  }
-  .stats .s { display: inline-flex; align-items: center; gap: 5px; }
-  .stats .s svg { width: 12px; height: 12px; fill: currentColor; }
-
-  .actions {
-    display: flex; gap: 8px; margin-top: 14px;
-    flex-wrap: wrap;
-  }
-  .actions button {
-    background: transparent; color: var(--fg-dim);
-    border: 1px solid var(--border); border-radius: 8px;
-    padding: 6px 14px; font-size: 12px; font-weight: 500;
-    cursor: pointer; transition: all 0.15s;
-    display: inline-flex; align-items: center; gap: 6px;
-  }
-  .actions button:hover { color: var(--fg); border-color: #404060; }
-  .actions button.danger:hover { color: var(--err); border-color: rgba(239,68,68,0.4); }
-  .actions button svg { width: 10px; height: 10px; fill: currentColor; }
-
-  /* Toast */
-  .toast {
-    position: fixed; bottom: 24px; right: 24px;
-    background: var(--surface-2);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 12px 18px; font-size: 13px;
-    color: var(--fg);
-    box-shadow: 0 8px 28px rgba(0,0,0,0.45);
-    transform: translateY(20px); opacity: 0;
-    transition: all 0.25s ease; z-index: 100;
-    max-width: 320px;
-  }
-  .toast.show { transform: translateY(0); opacity: 1; }
-  .toast.err  { border-color: rgba(239,68,68,0.4); }
-  .toast.ok   { border-color: rgba(34,197,94,0.4); }
-
-  /* Footer */
-  footer {
-    border-top: 1px solid var(--border);
-    background: var(--surface);
-    padding: 16px 24px;
-    font-size: 12px; color: var(--fg-dim);
-    display: flex; justify-content: space-between;
-  }
-  footer code {
-    font-family: 'JetBrains Mono', ui-monospace, monospace;
-    color: var(--cool); font-size: 11px;
-  }
-
-  @media (max-width: 600px) {
-    .row { flex-direction: column; }
-    .stats { gap: 10px; font-size: 11px; }
-    footer { flex-direction: column; gap: 6px; }
-  }
-</style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>cine :: torrent runtime</title>
+<meta name="color-scheme" content="dark light">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/styles.css">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 </head>
 <body>
 
-<header>
-  <div class="logo">
-    <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
-  </div>
-  <h1><span class="accent">cine</span>&nbsp;·&nbsp;torrent web</h1>
-  <div class="status">
-    <span class="dot" id="dot"></span>
-    <span id="statusText">connecting</span>
-  </div>
-</header>
+<!-- ───── [ SHELL ] ───────────────────────────────────────────────── -->
+<div class="shell" id="shell">
 
-<main>
-  <section class="add">
-    <label for="magnet">magnet link</label>
-    <div class="row">
-      <input type="text" id="magnet"
-             placeholder="magnet:?xt=urn:btih:…&tr=…"
-             autocomplete="off" spellcheck="false">
-      <button id="add-btn" onclick="addTorrent()">add torrent</button>
-    </div>
-  </section>
+  <!-- ───── [ LEFT RAIL ] ─────────────────────────────────────────── -->
+  <aside class="rail" aria-label="runtime status">
 
-  <div class="head">
-    <h2>downloads</h2>
-    <span class="count" id="count">0 active</span>
-  </div>
-  <div id="list" class="list">
-    <div class="empty">
-      <div class="icon">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
-             stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
+    <header class="rail-head">
+      <div class="brand">
+        <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M3 4 L21 12 L3 20 L3 14 L15 12 L3 10 Z"/>
+        </svg>
+        <span class="brand-name">cine</span>
+        <span class="brand-sub">torrent runtime</span>
       </div>
-      <p>paste a magnet link above to start downloading</p>
-      <p class="hint">torrents run via WebRTC · works behind NAT</p>
-    </div>
-  </div>
-</main>
+      <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle color mode" title="Toggle dark / light">
+        <svg class="ico ico-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.5 4.5l2 2M17.5 17.5l2 2M4.5 19.5l2-2M17.5 6.5l2-2"/></svg>
+        <svg class="ico ico-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 13a8 8 0 11-10-10 6 6 0 0010 10z"/></svg>
+      </button>
+    </header>
 
-<div class="toast" id="toast"></div>
+    <section class="rail-status" aria-label="connection">
+      <div class="status-head">connection</div>
+      <div class="status-pills" id="status-pills">
+        <!-- injected: pills for socket, dht, trackers, peers, signaling … -->
+      </div>
+      <div class="wire" aria-hidden="true">
+        <span class="wire-dot" id="wire-dot"></span>
+        <div class="wire-line"></div>
+        <span class="wire-amount" id="wire-amount">idle</span>
+      </div>
+    </section>
 
-<footer>
-  <span>cine-cli · torrent web ui</span>
-  <code id="footer-hash">no active torrent</code>
-</footer>
+    <section class="rail-feed" aria-label="event feed">
+      <div class="feed-head">event feed</div>
+      <ol class="feed-list" id="feed-list" aria-live="polite">
+        <!-- rolling terminal log -->
+      </ol>
+    </section>
 
-<script>
-const socket = io();
-const torrents = new Map();
+    <footer class="rail-foot">
+      <div class="foot-row"><span>uptime</span><span id="uptime">0s</span></div>
+      <div class="foot-row"><span>downloads</span><span id="dl-path">~/.…</span></div>
+      <div class="foot-row"><span>torrents</span><span id="totals">0 active · 0 bytes</span></div>
+    </footer>
+  </aside>
 
-function paintStatus(connected) {
-  const dot = document.getElementById('dot');
-  const txt = document.getElementById('statusText');
-  if (connected) { dot.classList.add('live'); txt.textContent = 'live'; }
-  else { dot.classList.remove('live'); txt.textContent = 'offline'; }
-}
+  <!-- ───── [ MAIN PANE ] ─────────────────────────────────────────── -->
+  <main class="main" aria-label="torrents">
 
-socket.on('connect', () => paintStatus(true));
-socket.on('disconnect', () => paintStatus(false));
-socket.on('torrent-list', (items) => { items.forEach(t => torrents.set(t.infoHash, t)); render(); });
-socket.on('torrent-update', (items) => { items.forEach(t => torrents.set(t.infoHash, t)); render(); });
+    <header class="main-head">
+      <div class="head-title">
+        <span class="t-num">01</span>
+        <h1>queue</h1>
+        <span class="t-meta" id="head-meta">0 active</span>
+      </div>
 
-async function addTorrent() {
-  const input = document.getElementById('magnet');
-  const btn = document.getElementById('add-btn');
-  const magnet = input.value.trim();
-  if (!magnet) return toast('magnet link required', 'err');
+      <form class="add-form" id="add-form" autocomplete="off">
+        <span class="add-prompt" aria-hidden="true">></span>
+        <input
+          type="text"
+          id="magnet"
+          name="magnet"
+          class="add-input"
+          spellcheck="false"
+          autocapitalize="off"
+          autocomplete="off"
+          autocorrect="off"
+          placeholder="magnet:?xt=urn:btih:<40 hex digits>…"
+        >
+        <span class="add-hint" id="add-hint" aria-hidden="true">enter ↵</span>
+        <button type="submit" class="add-submit" id="add-btn">enqueue</button>
+      </form>
+    </header>
 
-  btn.disabled = true; btn.textContent = 'adding…';
+    <section class="rows" id="rows" aria-label="torrents">
+      <!-- populated by render() -->
+    </section>
 
-  try {
-    const res = await fetch('/api/add', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ magnet }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'failed');
-    input.value = '';
-    toast(`added · ${data.name}`, 'ok');
-  } catch (err) {
-    toast(err.message || 'failed to add torrent', 'err');
-  } finally {
-    btn.disabled = false; btn.textContent = 'add torrent';
-  }
-}
+    <section class="empty" id="empty" hidden>
+      <div class="empty-illu" aria-hidden="true">
+        <svg viewBox="0 0 240 80" preserveAspectRatio="xMidYMid meet">
+          <text x="0"   y="44" font-family="JetBrains Mono" font-size="12" font-weight="500">[ empty queue ]</text>
+          <text x="0"   y="64" font-family="JetBrains Mono" font-size="12" font-weight="500" opacity=".45">$ paste a magnet link above and press enter</text>
+        </svg>
+      </div>
+    </section>
+  </main>
+</div>
 
-document.getElementById('magnet').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') addTorrent();
-});
+<!-- ───── [ INLINE OVERLAY: unimportant status, e.g. "added" ] ───── -->
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
-async function pause(h)   { await fetch(`/api/pause/${h}`,  { method: 'POST' }); }
-async function resume(h)  { await fetch(`/api/resume/${h}`, { method: 'POST' }); }
-async function remove(h)  {
-  await fetch(`/api/remove/${h}`, { method: 'POST' });
-  torrents.delete(h); render();
-}
+<!-- ───── [ SOCKET.IO ] ──────────────────────────────────────────── -->
+<script src="/socket.io/socket.io.js"></script>
 
-function formatBytes(b) {
-  if (!b) return '0 B';
-  const u = ['B','KB','MB','GB','TB'];
-  let i = 0; let n = b;
-  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
-  return `${n.toFixed(n < 10 && i > 0 ? 2 : 1)} ${u[i]}`;
-}
-function formatSpeed(bps) {
-  if (!bps) return '0 B/s';
-  return `${formatBytes(bps)}/s`;
-}
-function formatEta(ms) {
-  if (!ms || ms === Infinity) return '—';
-  const s = Math.round(ms / 1000);
-  if (s > 3600) return `${Math.floor(s/3600)}h ${Math.floor((s%3600)/60)}m`;
-  if (s > 60) return `${Math.floor(s/60)}m ${s%60}s`;
-  return `${s}s`;
-}
-function escapeHtml(s) {
-  return String(s)
-    .replace(/&/g, '\x26amp;')
-    .replace(/</g, '\x26lt;')
-    .replace(/>/g, '\x26gt;')
-    .replace(/"/g, '\x26quot;')
-    .replace(/'/g, '\x26#39;');
-}
+<!-- ───── [ GSAP ] ────────────────────────────────────────────────── -->
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
 
+<!-- ───── [ APP ] ────────────────────────────────────────────────── -->
+<script src="/app.js"></script>
 
-function render() {
-  const el = document.getElementById('list');
-  const items = Array.from(torrents.values());
-  document.getElementById('count').textContent = `${items.length} active`;
-  document.getElementById('footer-hash').textContent =
-    items.length ? `${items.length} torrent${items.length === 1 ? '' : 's'}` : 'no active torrent';
-
-  if (!items.length) {
-    el.innerHTML = `
-      <div class="empty">
-        <div class="icon">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
-               stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
-        </div>
-        <p>paste a magnet link above to start downloading</p>
-        <p class="hint">torrents run via WebRTC · works behind NAT</p>
-      </div>`;
-    return;
-  }
-
-  el.innerHTML = items.map(t => {
-    const pct = Math.round((t.progress || 0) * 100);
-    const done = t.done || pct >= 100;
-    const paused = t.paused && !done;
-    const badge = done ? `<span class="badge ok">complete</span>`
-                  : paused ? `<span class="badge warn">paused</span>`
-                  : `<span class="badge dl">downloading</span>`;
-    const label = paused ? 'paused' : done ? 'complete' : 'downloading';
-    const doneBytes = Math.round((t.size || 0) * (t.progress || 0));
-
-    return `
-      <div class="card ${done ? 'done' : ''} ${paused ? 'paused' : ''}">
-        <div class="top">
-          <div class="name">${escapeHtml(t.name)}</div>
-          ${badge}
-        </div>
-        <div class="progress">
-          <div class="bar"><div class="fill ${done ? 'done' : ''}" style="width:${pct}%"></div></div>
-          <div class="meta">
-            <span>${label} · ${pct}%</span>
-            <span>${formatBytes(doneBytes)} / ${formatBytes(t.size || 0)}</span>
-          </div>
-        </div>
-        <div class="stats">
-          <span class="s" title="download speed">${formatSpeed(t.downloadSpeed)}</span>
-          <span class="s" title="upload speed">${formatSpeed(t.uploadSpeed)}</span>
-          <span class="s" title="peers">${t.numPeers || 0} peers</span>
-          <span class="s" title="time remaining">${done ? '—' : formatEta(t.timeRemaining)}</span>
-        </div>
-        <div class="actions">
-          ${!done && !paused ? `<button onclick="pause('${t.infoHash}')">pause</button>` : ''}
-          ${!done && paused ? `<button onclick="resume('${t.infoHash}')">resume</button>` : ''}
-          <button class="danger" onclick="remove('${t.infoHash}')">remove</button>
-        </div>
-      </div>`;
-  }).join('');
-}
-
-let toastTimer = null;
-function toast(msg, kind) {
-  const el = document.getElementById('toast');
-  el.textContent = msg;
-  el.className = `toast show ${kind || ''}`;
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.remove('show'), 2800);
-}
-</script>
 </body>
 </html>
