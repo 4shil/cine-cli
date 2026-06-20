@@ -222,7 +222,11 @@ app.use(express.json());
  * upstream cli's "open the browser" hand-off landing on the wrong path.
  */
 app.use((req, _res, next) => {
-  process.stdout.write(`[req] ${req.method} ${req.url}\n`);
+  if (req.url.includes('/socket.io/') && req.url.includes('?EIO=')) {
+    // socket.io poll/upgrade cycles every few seconds — too noisy to log.
+  } else {
+    process.stdout.write(`[req] ${req.method} ${req.url}\n`);
+  }
   next();
 });
 
@@ -284,31 +288,61 @@ app.post('/api/add', async (req, res) => {
     return res.status(409).json({ error: 'Already added', infoHash: hash });
   }
   try {
-    const t = client.add(magnet, { path: DOWNLOAD_DIR, announce: torrentAnnounces() });
-    torrents.set(t.infoHash, {
-      torrent: t,
-      meta: { name: name || 'Loading...', infoHash: t.infoHash, addedAt: Date.now() },
-    });
-    await new Promise((resolve) => {
-      let done = false;
-      const finish = () => { if (!done) { done = true; resolve(); } };
-      t.on('metadata', finish);
-      t.on('ready', finish);
-      setTimeout(finish, 10000);
-    });
-    const meta = torrents.get(t.infoHash).meta;
-    meta.name = t.name || name || 'Unknown';
-    meta.size = t.length || 0;
-    res.json({
-      success: true,
-      infoHash: t.infoHash,
-      name: meta.name,
-      size: meta.size,
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+  const t = client.add(magnet, { path: DOWNLOAD_DIR, announce: torrentAnnounces() });
+  t.on('error', (e) => process.stdout.write(`[torrent-error] ${e.message}\n`));
+
+  // Wait for metadata first so `t.infoHash` is populated. WebTorrent v2
+  // returns the Torrent synchronously but `infoHash` is undefined until
+  // the `metadata` (or `ready`) event fires. Without this we register
+  // the entry under key "undefined" and lose the ability to look it up.
+  const resolvedHash = await new Promise((resolve) => {
+    let done = false;
+    const finish = (h) => {
+      if (done) return;
+      done = true;
+      resolve((t.infoHash || h || '').toLowerCase());
+    };
+    t.on('infoHash', finish);
+    t.on('metadata', () => finish());
+    t.on('ready',      () => finish());
+    setTimeout(() => finish(t.infoHash), 10000);
+  });
+
+  if (!resolvedHash) {
+    try { t.destroy(); } catch {}
+    return res.status(400).json({ error: 'Could not resolve info-hash from magnet' });
   }
-});
+
+  // Register under the now-known infoHash.
+  if (torrents.has(resolvedHash)) {
+    try { t.destroy(); } catch {}
+    return res.status(409).json({ error: 'Already added', infoHash: resolvedHash });
+  }
+  torrents.set(resolvedHash, {
+    torrent: t,
+    meta: { name: name || t.name || 'Loading...', infoHash: resolvedHash, addedAt: Date.now() },
+  });
+
+  // Backfill name/size once they're known.
+  t.once('metadata', () => {
+    const entry = torrents.get(resolvedHash);
+    if (!entry) return;
+    entry.meta.name = t.name || entry.meta.name;
+    if (t.length) entry.meta.size = t.length;
+  });
+
+  return res.json({
+    success: true,
+    infoHash: resolvedHash,
+    name: t.name || name || 'Loading...',
+  });
+  } catch (err) {
+  process.stdout.write(`[catch] ${err.message}\n`);
+  if (!res.headersSent) {
+    return res.status(500).json({ error: err.message });
+  }
+  }
+  });
 
 app.get('/api/torrents', (_req, res) => {
   const list = [];
