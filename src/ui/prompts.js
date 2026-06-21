@@ -17,7 +17,10 @@ let _hasFzf = null;
 export function hasFzf() {
   if (_hasFzf !== null) return _hasFzf;
   try {
-    _hasFzf = existsSync(execFileSync('which', ['fzf']).toString().trim());
+    const cmd = process.platform === 'win32' ? 'where.exe' : 'which';
+    const output = execFileSync(cmd, ['fzf']).toString().trim();
+    const firstPath = output.split(/\r?\n/)[0].trim();
+    _hasFzf = existsSync(firstPath);
   } catch {
     _hasFzf = false;
   }
