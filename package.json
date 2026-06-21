@@ -1,6 +1,6 @@
 {
   "name": "cine-cli",
-  "version": "5.0.1",
+  "version": "5.0.2",
   "description": "Watch anything from your terminal. Browser-first, multi-provider, torrent web UI — all in one shot.",
   "type": "module",
   "main": "src/cli.js",
