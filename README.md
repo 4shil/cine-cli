@@ -1,6 +1,14 @@
-# cine-cli
+<p align="center">
+  <a href="https://github.com/4shil/cine-cli"><img src="https://img.shields.io/badge/project-cine--cli-magenta?style=for-the-badge&logo=github" alt="Project"></a>
+  <a href="https://nodejs.org"><img src="https://img.shields.io/badge/node-%E2%89%A5%2018-green?style=for-the-badge&logo=node.js" alt="Node Version"></a>
+  <a href="https://github.com/4shil/cine-cli/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=for-the-badge" alt="License"></a>
+</p>
 
-Watch anything from your terminal. Browser-first, multi-provider, torrent web UI — one shot.
+<h1 align="center">cine-cli</h1>
+
+<p align="center">
+  <strong>Watch anything from your terminal. Browser-first, multi-provider, torrent web UI — one shot.</strong>
+</p>
 
 ```
 cine "inception"
@@ -120,6 +128,12 @@ External tools (peer):
 - `fzf` (optional) — uses it for every picker when present, falls back to `@clack/prompts` otherwise
 - `xdg-open` / `open` / `cmd /c start` — for the browser handoff
 - Web browser — any modern browser, since torrent streaming runs in-browser
+
+## Inspiration & Credits
+
+This project is heavily inspired by:
+- [ani-cli](https://github.com/pystardust/ani-cli) — the ultimate CLI tool to browse and stream anime.
+- [mov-cli](https://github.com/mov-cli/mov-cli) — the modular movie scraper CLI.
 
 ## License
 
