@@ -86,9 +86,9 @@ async function runSelect({ message, items, defaultIndex = 0 }) {
  * a provider picker is rarely what the user wanted; they probably hit Esc
  * instinctively.
  */
-export async function selectProvider({ message, items, defaultIndex = 0 }) {
+export async function selectProvider({ message, items, defaultIndex = 0, forceFzf = false }) {
   if (!items.length) return null;
-  if (preferFzf()) {
+  if (preferFzf() || (forceFzf && hasFzf() && !!process.stdin.isTTY)) {
     const value = pickWithFzf(message, items, defaultIndex);
     if (value !== null) return value;
   }

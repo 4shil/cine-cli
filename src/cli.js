@@ -240,13 +240,13 @@ async function runTorrentFlow({ item, resolved, pick }, opts) {
   }
 
   let chosen = null;
-  if (process.stdin.isTTY && hasFzf()) {
+  if (process.stdin.isTTY) {
     const items = streams.map((s, i) => ({
       label: `${(i + 1).toString().padStart(2, ' ')}. ${theme.fg(s.quality.padEnd(6))} ${theme.dim(s.fileSizeLabel().padEnd(8))} ${theme.cold('seeds ' + s.seeders).padEnd(16)} ${theme.dim(s.name.slice(0, 48))}`,
       value: s,
       hint: '',
     }));
-    chosen = await selectProvider({ message: 'pick a torrent', items, defaultIndex: 0 });
+    chosen = await selectProvider({ message: 'pick a torrent', items, defaultIndex: 0, forceFzf: true });
   } else {
     chosen = streams[0];
   }
