@@ -30,7 +30,7 @@ export function makeSpinner(startMessage) {
     },
     cancel(msg) {
       if (msg) process.stdout.write(`  ${msg}\n`);
-      s.cancel(msg);
+      s.stop(msg, 1);
     },
   };
 }

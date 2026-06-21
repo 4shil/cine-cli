@@ -8,7 +8,7 @@
 import { fetch } from 'undici';
 
 export const TMDB_API_KEY = '1f54bd990f1cdfb230adb312546d765d';
-export const TMDB_BASE = 'https://api.themoviedb.org/3';
+export const TMDB_BASE = process.env.TMDB_BASE_URL || 'https://api.tmdb.org/3';
 
 const ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
 
