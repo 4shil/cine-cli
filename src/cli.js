@@ -47,7 +47,12 @@ program
   .option('--list-providers', 'Print known providers and exit')
   .option('--smoke', 'Run full flow in non-interactive mode without spawning a browser (verification)')
   .option('--fzf', 'Use fzf for picker UIs (off by default — @clack/prompts is more reliable)')
+  .option('-U, --update', 'Update cine-cli to the latest version')
   .action(async (queryParts, opts) => {
+    if (opts.update) {
+      await updatePackage();
+      return;
+    }
     // Honour --fzf flag by setting the opt-in env var.
     if (opts.fzf) process.env.FZF_PICKER = '1';
     if (opts.color === false) {
@@ -313,4 +318,29 @@ function gracefulExit(reason) {
   console.log(`  ${theme.dim(sym.dot)} ${theme.dim(reason)}`);
   console.log('');
   process.exit(0);
+}
+
+async function updatePackage() {
+  const { spawn } = await import('node:child_process');
+  console.log('');
+  console.log(`  ${theme.dim(sym.dot)} ${theme.fg('Updating cine-cli to the latest version...')}`);
+  console.log('');
+
+  const cmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+  const proc = spawn(cmd, ['install', '-g', 'cine-cli@latest'], {
+    stdio: 'inherit',
+  });
+
+  proc.on('close', (code) => {
+    console.log('');
+    if (code === 0) {
+      console.log(`  ${theme.ok(sym.check)} ${theme.fg('Successfully updated cine-cli!')}`);
+      console.log('');
+      process.exit(0);
+    } else {
+      console.log(`  ${theme.error(sym.cross)} ${theme.fg('Failed to update. Try running: npm install -g cine-cli')}`);
+      console.log('');
+      process.exit(1);
+    }
+  });
 }

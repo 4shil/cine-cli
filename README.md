@@ -40,6 +40,7 @@ cine [query] [options]
       --no-banner        Skip the welcome screen
       --no-color         Disable colour output
       --smoke            Run full flow in non-interactive mode (no browser open)
+  -U, --update           Update cine-cli to the latest version
   -V, --version
 ```
 
