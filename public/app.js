@@ -73,8 +73,7 @@ const feed = {
     const time = new Date();
     const hh = String(time.getHours()).padStart(2, "0");
     const mm = String(time.getMinutes()).padStart(2, "0");
-    const ss = String(time.getSeconds()).padStart(2, "0");
-    this.list.push({ kind, glyph, msg, t: `${hh}:${mm}:${ss}` });
+    this.list.push({ kind, glyph, msg, t: `${hh}:${mm}` });
     if (this.list.length > this.max) this.list.shift();
     this.render();
   },
@@ -211,7 +210,15 @@ function recomputeHeadMeta() {
 
 function statusStateFor(t) {
   if (t.error) return "err";
-  if (t.done || t.progress >= 1) return "complete";
+  const complete = t.done || t.progress >= 1;
+  if (complete) {
+    // Once the download is finished, we're seeding if we still have
+    // upload throughput — i.e. we still have peers and are sharing.
+    // When the upload rate drops to zero (no peers), the row flips
+    // to "complete" so the user clearly sees it's done.
+    if ((t.uploadSpeed || 0) > 0) return "seeding";
+    return "complete";
+  }
   if (t.paused) return "paused";
   if ((t.uploadSpeed || 0) > (t.downloadSpeed || 0) && (t.uploadSpeed || 0) > 0) return "seeding";
   return "downloading";
@@ -263,10 +270,9 @@ function buildRow(t) {
         </div>
       </div>
       <div class="row-actions">
-        <button class="ra-btn" data-role="pause"   type="button">pause</button>
-        <button class="ra-btn" data-role="resume"  type="button">resume</button>
-        <button class="ra-btn" data-role="copy"    type="button">copy</button>
-        <button class="ra-btn danger" data-role="remove" type="button">remove</button>
+        <button class="ra-btn"            data-role="toggle"  type="button">pause</button>
+        <button class="ra-btn"            data-role="copy"    type="button">copy</button>
+        <button class="ra-btn danger"     data-role="remove"  type="button">remove</button>
       </div>
     </div>
   `;
@@ -282,8 +288,15 @@ function buildRow(t) {
 
   // bindings
   el.$ = (role) => el.querySelector('[data-role="' + role + '"]');
-  el.$.pause?.addEventListener("click",  () => socket.emit("pause",  t.infoHash));
-  el.$.resume?.addEventListener("click", () => socket.emit("resume", t.infoHash));
+  el.$.toggle?.addEventListener("click", () => {
+    if (!t.infoHash) return;
+    const wasPaused = !!(entry.data && entry.data.paused);
+    // optimistic flip so the UI reacts instantly
+    entry.data = Object.assign({}, entry.data, { paused: !wasPaused });
+    upsertRow(entry.data);
+    socket.emit(wasPaused ? "resume" : "pause", t.infoHash);
+    flashToggle(el.$.toggle);
+  });
   el.$.copy?.addEventListener("click",    () => copyMagnet(t.infoHash));
   el.$.remove?.addEventListener("click", () => removeRow(t.infoHash));
 
@@ -401,8 +414,24 @@ function upsertRow(t) {
   drawSparkline(entry);
 
   // buttons
-  entry.el.$("pause").disabled  = st === "complete" || st === "paused" || st === "seeding";
-  entry.el.$("resume").disabled = st !== "paused";
+  // Pause/Resume toggle:
+  //  - "done" (disabled) when the torrent is fully complete.
+  //  - "resume" once the server pauses it (stays enabled to allow resume).
+  //  - "pause" everywhere else.
+  {
+    const tb = entry.el.$("toggle");
+    if (tb) {
+      if (st === "complete") {
+        tb.disabled = true;
+        tb.textContent = "done";
+        tb.dataset.tone = "ok";
+      } else {
+        tb.disabled = false;
+        tb.textContent = (entry.data && entry.data.paused) ? "resume" : "pause";
+        tb.dataset.tone = (entry.data && entry.data.paused) ? "warn" : "";
+      }
+    }
+  }
 
   entry.data = t;
 }
@@ -424,6 +453,19 @@ function tweenNumber(el, target, fmt) {
     },
     onComplete: () => { el.dataset.num = String(target); el.textContent = fmt(target); },
   });
+}
+
+/**
+ * Quick visual confirmation that a click landed — a 200 ms faded briefly
+ * border ring on the button so the user sees the action took effect even
+ * before the server's `runtime` event arrives.
+ */
+function flashToggle(btn) {
+  if (!btn) return;
+  btn.classList.remove("flash");
+  // force reflow so the class re-add re-runs the animation
+  void btn.offsetWidth;
+  btn.classList.add("flash");
 }
 
 // Draw a gentle SVG sparkline for download + upload over the last 60 ticks.

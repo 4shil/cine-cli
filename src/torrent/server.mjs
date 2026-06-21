@@ -426,25 +426,56 @@ io.on('connection', (socket) => {
   socket.emit('runtime', { kind: 'info', msg: 'client connected  ·  ' + (socket.id || '?').slice(0, 8) });
 
   // Socket.io-driven pause / resume / remove (the UI uses these now).
-  socket.on('pause',  (hash) => {
+  socket.on('pause',  async (hash) => {
     const e = lookUp(hash);
     if (!e) return socket.emit('runtime', { kind: 'warn', msg: 'pause: not found  ·  ' + (hash || '').slice(0, 8) });
-    e.torrent.pause();
+    try { e.torrent.pause(); } catch (err) { /* ignored */ }
     socket.emit('runtime', { kind: 'info', msg: 'paused  ·  ' + (e.meta.name || hash).slice(0, 32) });
   });
-  socket.on('resume', (hash) => {
+  socket.on('resume', async (hash) => {
     const e = lookUp(hash);
     if (!e) return socket.emit('runtime', { kind: 'warn', msg: 'resume: not found  ·  ' + (hash || '').slice(0, 8) });
-    e.torrent.resume();
+    try { e.torrent.resume(); } catch (err) { /* ignored */ }
     socket.emit('runtime', { kind: 'info', msg: 'resumed  ·  ' + (e.meta.name || hash).slice(0, 32) });
   });
-  socket.on('remove', (hash) => {
+  socket.on('remove', async (hash, ack) => {
     const e = lookUp(hash);
-    if (!e) return socket.emit('runtime', { kind: 'warn', msg: 'remove: not found  ·  ' + (hash || '').slice(0, 8) });
-    try { e.torrent.destroy(); } catch {}
-    torrents.delete((e.meta.infoHash || hash || '').toLowerCase());
-    io.emit('torrent-update', []); // wake up the page
-    io.emit('runtime', { kind: 'info', msg: 'removed  ·  ' + (e.meta.name || hash).slice(0, 32) });
+    if (!e) {
+      socket.emit('runtime', { kind: 'warn', msg: 'remove: not found  ·  ' + (hash || '').slice(0, 8) });
+      if (typeof ack === 'function') ack({ ok: false, error: 'not found' });
+      return;
+    }
+    const name = (e.meta.name || hash || '').slice(0, 32);
+    try {
+      // Stop WebTorrent cleanly. `remove({ destroyStore: false }, cb)`
+      // tears down peers/connections; `destroy()` then releases internal
+      // handles. We pass destroyStore:false so partial files on disk
+      // remain for the user — the typical torrent-UX expectation.
+      // The user's runtime state ("downloading" / "seeding" / etc.)
+      // is broadcast one last time before deletion so any UI animation
+      // finishing on the client sees the entry fully removed.
+      io.emit('torrent-update', []); // prime — clear queued state
+      await new Promise((resolve) => {
+        try {
+          if (typeof e.torrent.remove === 'function') {
+            e.torrent.remove(false, () => resolve());
+          } else {
+            resolve();
+          }
+        } catch (err) {
+          resolve();
+        }
+        // safety cutoff — never block forever
+        setTimeout(resolve, 800).unref();
+      });
+      try { e.torrent.destroy(); } catch (err) {}
+      torrents.delete(keyOf(e));
+      io.emit('runtime', { kind: 'info', msg: 'removed  ·  ' + name });
+      if (typeof ack === 'function') ack({ ok: true });
+    } catch (err) {
+      io.emit('runtime', { kind: 'bad', msg: 'remove failed  ·  ' + name + '  ·  ' + (err.message || String(err)) });
+      if (typeof ack === 'function') ack({ ok: false, error: String(err && err.message || err) });
+    }
   });
 
   socket.on('disconnect', () => {
@@ -456,6 +487,10 @@ function lookUp(hash) {
   if (typeof hash !== 'string') return null;
   const e = torrents.get(hash.toLowerCase());
   return e || null;
+}
+
+function keyOf(e) {
+  return ((e && e.meta && e.meta.infoHash) || '').toLowerCase();
 }
 
 setInterval(() => {

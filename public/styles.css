@@ -542,21 +542,35 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
 }
 
 .row-actions {
-  padding: 6px 14px 8px;
+  padding: 8px 12px 10px;
   display: flex;
-  gap: 6px;
+  flex-wrap: wrap;
+  gap: 4px;
   font-size: 11px;
 }
 .ra-btn {
   border: var(--hairline-soft);
   border-radius: 2px;
-  padding: 4px 9px;
+  padding: 4px 8px;
   color: var(--c-fg-dim);
+  background: transparent;
+  flex: 0 1 auto;
+  white-space: nowrap;
   transition: color 0.16s, border-color 0.16s, background 0.16s;
 }
 .ra-btn:hover { color: var(--c-fg); border-color: var(--c-border-2); }
 .ra-btn.danger:hover { color: var(--c-bad); border-color: var(--c-bad); }
 .ra-btn[disabled] { opacity: 0.3; pointer-events: none; }
+.ra-btn[data-tone="ok"] { color: var(--c-good); border-color: var(--c-good); }
+.ra-btn[data-tone="warn"] { color: var(--c-warn); border-color: var(--c-warn); }
+.ra-btn.flash { animation: btn-flash 0.32s ease-out; }
+@keyframes btn-flash {
+  0%   { background: transparent; box-shadow: 0 0 0 0 transparent; }
+  40%  { background: var(--c-fg); color: var(--c-bg); box-shadow: 0 0 0 1px var(--c-fg); }
+  100% { background: transparent; box-shadow: 0 0 0 0 transparent; }
+}
+/* icon-only utility — for tighter rows */
+.ra-btn.tight { padding: 4px 6px; }
 
 /* Empty state */
 .empty {
