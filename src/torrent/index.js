@@ -166,13 +166,13 @@ export async function startTorrentWebServerAndOpen({ magnet, name, port = 3737, 
   proc.stderr.on('data', (chunk) => process.stderr.write(`  ${chunk}`));
 
   const ready = await waitForServer(`http://${host}:${freePort}/`, {
-    timeoutMs: 6000,
+    timeoutMs: 15000,
     intervalMs: 150,
     onPoll: () => childExited,
   });
 
   if (!ready) {
-    let why = `web torrent server did not become ready on http://${host}:${freePort} within 6s`;
+    let why = `web torrent server did not become ready on http://${host}:${freePort} within 15s`;
     if (childExited) {
       why += ` (child exited: ${JSON.stringify(childExitInfo)})`;
     }
@@ -202,7 +202,7 @@ export async function startTorrentWebServerAndOpen({ magnet, name, port = 3737, 
   return { url, port: freePort, proc, ready: true };
 }
 
-async function waitForServer(url, { timeoutMs = 6000, intervalMs = 200, onPoll } = {}) {
+async function waitForServer(url, { timeoutMs = 15000, intervalMs = 200, onPoll } = {}) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     if (typeof onPoll === 'function' && onPoll()) return false;
