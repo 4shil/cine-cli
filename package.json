@@ -18,7 +18,8 @@
     "dev": "node --watch bin/cine.js"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
   },
   "keywords": [
     "movie",
@@ -34,6 +35,14 @@
   ],
   "author": "Ashil <4shil@users.noreply.github.com>",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/4shil/cine-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/4shil/cine-cli/issues"
+  },
+  "homepage": "https://github.com/4shil/cine-cli#readme",
   "dependencies": {
     "@clack/core": "^0.5.0",
     "@clack/prompts": "^0.11.0",
