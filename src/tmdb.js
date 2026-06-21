@@ -98,3 +98,14 @@ export async function ensureImdbId(item) {
   const ext = await externalIds(item.tmdbId, item.type);
   return ext.imdb_id || '';
 }
+
+/**
+ * Fetch TV details for seasons / episode counts.
+ */
+export async function tvDetails(tmdbId) {
+  try {
+    return await tmdbGet(`tv/${tmdbId}`, {});
+  } catch {
+    return null;
+  }
+}
