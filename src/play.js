@@ -18,6 +18,8 @@ export async function playInBrowser({ url, title, providerName }) {
   console.log(`  ${theme.cold('│')}    ${theme.dim(url)}`);
   console.log(`  ${theme.cold('└──')}`);
   console.log('');
+  console.log(`  ${theme.warn(sym.arrow)} ${theme.dim('Tip: Use Brave Browser or an ad-blocker for an ad-free experience.')}`);
+  console.log('');
 
   try {
     await open(url, { wait: false });
