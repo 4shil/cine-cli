@@ -26,6 +26,9 @@ npm install -g cine-cli
 
 > Requires **Node ≥ 18** and a modern browser. `xdg-open` (Linux), `open` (macOS), or `cmd /c start` (Windows) for handoff.
 
+> [!TIP]
+> **Ad-free Experience:** Streaming providers often contain ads. It is highly recommended to use **Brave Browser** or a browser with an ad-blocker (like uBlock Origin) for the best ad-free experience.
+
 ## Usage
 
 ```
