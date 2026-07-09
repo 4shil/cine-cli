@@ -4,8 +4,18 @@
  * No emoji progress bars, no subprocess noise. Just clean open + report.
  */
 
-import open from 'open';
 import { theme, sym, kv } from './ui/theme.js';
+
+function openUrl(url) {
+  const cmd = process.platform === 'darwin' ? 'open'
+    : process.platform === 'win32' ? 'cmd' : 'xdg-open';
+  const args = process.platform === 'win32'
+    ? ['/c', 'start', '', url] : [url];
+  try {
+    const child = spawn(cmd, args, { detached: true, stdio: 'ignore', windowsHide: true });
+    child.unref();
+  } catch (_err) { /* best-effort */ }
+}
 
 export async function playInBrowser({ url, title, providerName }) {
   console.log('');
@@ -21,12 +31,6 @@ export async function playInBrowser({ url, title, providerName }) {
   console.log(`  ${theme.warn(sym.arrow)} ${theme.dim('Tip: Use Brave Browser or an ad-blocker for an ad-free experience.')}`);
   console.log('');
 
-  try {
-    await open(url, { wait: false });
-    return true;
-  } catch (err) {
-    console.error(`  ${theme.error(sym.cross)} ${theme.fg('failed to open browser')}`);
-    console.error(`  ${theme.dim(err.message)}`);
-    return false;
-  }
+  openUrl(url);
+  return true;
 }

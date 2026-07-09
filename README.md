@@ -6,6 +6,10 @@
 
 <h1 align="center">cine-cli</h1>
 
+> [!WARNING]
+> **Educational use only.** Streaming and torrenting may be restricted in your country and may violate the terms of service of the content providers and local laws. The authors do not endorse piracy and are not responsible for misuse. Use this project only with content you own or have rights to access.
+
+
 <p align="center">
   <strong>Watch anything from your terminal. Browser-first, multi-provider, torrent web UI — one shot.</strong>
 </p>
@@ -132,6 +136,19 @@ External tools (peer):
 - `fzf` (optional) — uses it for every picker when present, falls back to `@clack/prompts` otherwise
 - `xdg-open` / `open` / `cmd /c start` — for the browser handoff
 - Web browser — any modern browser, since torrent streaming runs in-browser
+
+## Security
+
+**Known advisory: [CVE-2024-29415](https://github.com/advisories/GHSA-2p57-rm9w-gvfp) (HIGH) — `ip` SSRF in `isPublic`**
+
+The vulnerable package is `ip@2.0.1`, pulled in transitively via:
+`webtorrent → torrent-discovery → bittorrent-tracker → ip@^2.0.0`
+
+cine-cli v5.1.0+ mitigates this by overriding `ip` to `^1.1.9` (pre-CVE, no breakage in the IP-range APIs used by the tracker). The advisory database may still list the advisory for the declared upstream range; the actual installed `ip` version is safe.
+
+`npm audit fix --force` would roll `webtorrent` back to the 0.x API line (a different, deprecated package), which breaks cine-cli's API surface. That suggestion is incorrect for this project and should be ignored.
+
+If you find another issue, please file it at [github.com/4shil/cine-cli/issues](https://github.com/4shil/cine-cli/issues).
 
 ## Inspiration & Credits
 
