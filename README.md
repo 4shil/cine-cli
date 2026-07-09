@@ -6,6 +6,10 @@
 
 <h1 align="center">cine-cli</h1>
 
+> [!WARNING]
+> **Educational use only.** Streaming and torrenting may be restricted in your country and may violate the terms of service of the content providers and local laws. The authors do not endorse piracy and are not responsible for misuse. Use this project only with content you own or have rights to access.
+
+
 <p align="center">
   <strong>Watch anything from your terminal. Browser-first, multi-provider, torrent web UI — one shot.</strong>
 </p>
