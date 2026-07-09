@@ -16,11 +16,18 @@
 import express from 'express';
 import { createServer } from 'node:http';
 import { Server as SocketIOServer } from 'socket.io';
-import WebTorrent from 'webtorrent';
 import { mkdirSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
+
+let WebTorrent = null;
+let webTorrentLoadError = null;
+try {
+  WebTorrent = (await import('webtorrent')).default;
+} catch (err) {
+  webTorrentLoadError = err;
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -34,6 +41,8 @@ const PORT = parseInt(arg('--port', '3737'), 10);
 const HOST = arg('--host', '127.0.0.1');
 const DOWNLOAD_DIR = arg('--dir', path.join(os.homedir(), 'Downloads', 'cine-cli'));
 const MAX_CONCURRENT = 5;
+const WEBTORRENT_INSTALL_HINT =
+  'WebTorrent is optional and was not installed. Install it globally to enable the torrent web server: npm install -g webtorrent';
 
 /**
  * Resolve the public directory.
@@ -275,7 +284,7 @@ if (HAS_INDEX) {
 
 const httpServer = createServer(app);
 const io = new SocketIOServer(httpServer, { cors: { origin: '*' } });
-const client = new WebTorrent();
+const client = WebTorrent ? new WebTorrent() : null;
 
 const torrents = new Map();
 
@@ -298,6 +307,10 @@ app.post('/api/add', async (req, res) => {
   const { magnet, name } = req.body || {};
   if (typeof magnet !== 'string' || !magnet.startsWith('magnet:')) {
     return res.status(400).json({ error: 'Invalid magnet link' });
+  }
+  if (!client) {
+    const detail = webTorrentLoadError?.message ? ` (${webTorrentLoadError.message})` : '';
+    return res.status(503).json({ error: `${WEBTORRENT_INSTALL_HINT}${detail}` });
   }
   if (torrents.size >= MAX_CONCURRENT) {
     return res.status(429).json({ error: `Max ${MAX_CONCURRENT} concurrent downloads` });

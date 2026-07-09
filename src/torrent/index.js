@@ -8,10 +8,21 @@
  */
 
 import { fetch } from 'undici';
-import open from 'open';
 import { createServer } from 'node:net';
+import { spawn } from 'node:child_process';
 
 const BASE = 'https://torrentio.strem.fun';
+
+function openUrl(url) {
+  const cmd = process.platform === 'darwin' ? 'open'
+    : process.platform === 'win32' ? 'cmd' : 'xdg-open';
+  const args = process.platform === 'win32'
+    ? ['/c', 'start', '', url] : [url];
+  try {
+    const child = spawn(cmd, args, { detached: true, stdio: 'ignore', windowsHide: true });
+    child.unref();
+  } catch (_err) { /* best-effort */ }
+}
 const CONFIG = 'providers=yts,eztv,rarbg,1337x,thepiratebay|qualityfilter=480p,720p,1080p|sort=qualitysize';
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
@@ -198,7 +209,7 @@ export async function startTorrentWebServerAndOpen({ magnet, name, port = 3737, 
   // page falls back to the queue if params fail).
   const params = new URLSearchParams({ magnet, name });
   const url = `http://${host}:${freePort}/?${params.toString()}`;
-  await open(url, { wait: false });
+  openUrl(url);
   return { url, port: freePort, proc, ready: true };
 }
 

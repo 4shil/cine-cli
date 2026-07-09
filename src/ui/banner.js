@@ -20,9 +20,9 @@ const LOGO_LINES = [
  * Renders the compact logo alongside a graceful wordmark,
  * strictly inside width columns.
  */
-function wordmark(gradient) {
-  // "cine" styled with the brand gradient
-  return gradient('cine');
+function wordmark() {
+  // "cine" styled with the brand color (terminal-safe)
+  return theme.brand('cine');
 }
 
 function tagline(msg) {
@@ -45,7 +45,7 @@ export function showBanner({ version, platform, interactive }) {
 
   // Top bar
   lines.push('');
-  lines.push(`  ${theme.cold(sym.bracketL)} ${wordmark(theme.gradient)} ${theme.cold(sym.pipe)} ${theme.dim('v' + version)} ${theme.mute(sym.pipe)} ${theme.mute('node')} ${theme.dim(process.versions.node)} ${theme.cold(sym.bracketR)}`);
+  lines.push(`  ${theme.cold(sym.bracketL)} ${wordmark()} ${theme.cold(sym.pipe)} ${theme.dim('v' + version)} ${theme.mute(sym.pipe)} ${theme.mute('node')} ${theme.dim(process.versions.node)} ${theme.cold(sym.bracketR)}`);
 
   // Compact logo on the left, padding wordmark on the right
   for (const line of LOGO_LINES) {

@@ -5,12 +5,11 @@
  */
 
 import chalk from 'chalk';
-import gradient from 'gradient-string';
 
 const palette = {
   brand: '#7C3AED',     // violet
   brandHot: '#EC4899',  // pink
-  brandCold: '#22D3EE', // cyan
+  brandCold: '#22D3EE',  // cyan
   fg: '#E4E4F1',
   dim: '#8B8BA7',
   mute: '#4B4B66',
@@ -24,13 +23,9 @@ const palette = {
 
 chalk.level = 3; // 24-bit colors
 
-const brand = gradient(['#7C3AED', '#EC4899', '#22D3EE']);
-
 export const theme = {
   ...palette,
   chalk,
-  gradient: brand,
-
   // Semantic helpers
   brand: chalk.hex(palette.brand),
   hot: chalk.hex(palette.brandHot),
