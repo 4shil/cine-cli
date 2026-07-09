@@ -288,17 +288,17 @@ function buildRow(t) {
 
   // bindings
   el.$ = (role) => el.querySelector('[data-role="' + role + '"]');
-  el.$.toggle?.addEventListener("click", () => {
+  el.$("toggle")?.addEventListener("click", () => {
     if (!t.infoHash) return;
     const wasPaused = !!(entry.data && entry.data.paused);
     // optimistic flip so the UI reacts instantly
     entry.data = Object.assign({}, entry.data, { paused: !wasPaused });
     upsertRow(entry.data);
     socket.emit(wasPaused ? "resume" : "pause", t.infoHash);
-    flashToggle(el.$.toggle);
+    flashToggle(el.$("toggle"));
   });
-  el.$.copy?.addEventListener("click",    () => copyMagnet(t.infoHash));
-  el.$.remove?.addEventListener("click", () => removeRow(t.infoHash));
+  el.$("copy")?.addEventListener("click",    () => copyMagnet(t.infoHash));
+  el.$("remove")?.addEventListener("click", () => removeRow(t.infoHash));
 
   const entry = {
     el,

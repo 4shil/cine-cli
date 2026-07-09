@@ -17,7 +17,7 @@ import { textSearch, selectProvider, pickResult, pickNumber, hasFzf } from './ui
 import { searchAll, resolveProviders } from './scraper.js';
 import { playInBrowser } from './play.js';
 import { fetchStreams, startTorrentWebServerAndOpen } from './torrent/index.js';
-import { ensureImdbId } from './tmdb.js';
+import { ensureImdbId, tvDetails } from './tmdb.js';
 
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -47,7 +47,12 @@ program
   .option('--list-providers', 'Print known providers and exit')
   .option('--smoke', 'Run full flow in non-interactive mode without spawning a browser (verification)')
   .option('--fzf', 'Use fzf for picker UIs (off by default — @clack/prompts is more reliable)')
+  .option('-U, --update', 'Update cine-cli to the latest version')
   .action(async (queryParts, opts) => {
+    if (opts.update) {
+      await updatePackage();
+      return;
+    }
     // Honour --fzf flag by setting the opt-in env var.
     if (opts.fzf) process.env.FZF_PICKER = '1';
     if (opts.color === false) {
@@ -154,11 +159,49 @@ async function runFlow(query, opts, { isTTY }) {
       season = 1; episode = 1;
     } else {
       console.log('');
-      const s = await pickNumber({ message: 'season',  min: 1, max: 99, defaultValue: 1 });
-      if (s === null) return gracefulExit('cancelled');
-      const e = await pickNumber({ message: 'episode', min: 1, max: 999, defaultValue: 1 });
-      if (e === null) return gracefulExit('cancelled');
-      season = s; episode = e;
+      const details = await tvDetails(item.tmdbId);
+      if (details && details.seasons && details.seasons.length > 0) {
+        const seasons = details.seasons
+          .filter((s) => s.season_number > 0 && s.episode_count > 0)
+          .map((s) => ({
+            label: `Season ${s.season_number} (${s.episode_count} episodes)`,
+            value: s,
+          }));
+
+        if (seasons.length > 0) {
+          const s = await selectProvider({
+            message: 'pick a season',
+            items: seasons,
+            defaultIndex: 0,
+          });
+          if (s === null) return gracefulExit('cancelled');
+          season = s.season_number;
+
+          const episodes = Array.from({ length: s.episode_count }, (_, i) => ({
+            label: `Episode ${i + 1}`,
+            value: i + 1,
+          }));
+          const e = await selectProvider({
+            message: 'pick an episode',
+            items: episodes,
+            defaultIndex: 0,
+          });
+          if (e === null) return gracefulExit('cancelled');
+          episode = e;
+        } else {
+          const s = await pickNumber({ message: 'season',  min: 1, max: 99, defaultValue: 1 });
+          if (s === null) return gracefulExit('cancelled');
+          const e = await pickNumber({ message: 'episode', min: 1, max: 999, defaultValue: 1 });
+          if (e === null) return gracefulExit('cancelled');
+          season = s; episode = e;
+        }
+      } else {
+        const s = await pickNumber({ message: 'season',  min: 1, max: 99, defaultValue: 1 });
+        if (s === null) return gracefulExit('cancelled');
+        const e = await pickNumber({ message: 'episode', min: 1, max: 999, defaultValue: 1 });
+        if (e === null) return gracefulExit('cancelled');
+        season = s; episode = e;
+      }
     }
   }
 
@@ -240,13 +283,13 @@ async function runTorrentFlow({ item, resolved, pick }, opts) {
   }
 
   let chosen = null;
-  if (process.stdin.isTTY && hasFzf()) {
+  if (process.stdin.isTTY) {
     const items = streams.map((s, i) => ({
       label: `${(i + 1).toString().padStart(2, ' ')}. ${theme.fg(s.quality.padEnd(6))} ${theme.dim(s.fileSizeLabel().padEnd(8))} ${theme.cold('seeds ' + s.seeders).padEnd(16)} ${theme.dim(s.name.slice(0, 48))}`,
       value: s,
       hint: '',
     }));
-    chosen = await selectProvider({ message: 'pick a torrent', items, defaultIndex: 0 });
+    chosen = await selectProvider({ message: 'pick a torrent', items, defaultIndex: 0, forceFzf: true });
   } else {
     chosen = streams[0];
   }
@@ -313,4 +356,29 @@ function gracefulExit(reason) {
   console.log(`  ${theme.dim(sym.dot)} ${theme.dim(reason)}`);
   console.log('');
   process.exit(0);
+}
+
+async function updatePackage() {
+  const { spawn } = await import('node:child_process');
+  console.log('');
+  console.log(`  ${theme.dim(sym.dot)} ${theme.fg('Updating cine-cli to the latest version...')}`);
+  console.log('');
+
+  const cmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+  const proc = spawn(cmd, ['install', '-g', 'cine-cli@latest'], {
+    stdio: 'inherit',
+  });
+
+  proc.on('close', (code) => {
+    console.log('');
+    if (code === 0) {
+      console.log(`  ${theme.ok(sym.check)} ${theme.fg('Successfully updated cine-cli!')}`);
+      console.log('');
+      process.exit(0);
+    } else {
+      console.log(`  ${theme.error(sym.cross)} ${theme.fg('Failed to update. Try running: npm install -g cine-cli')}`);
+      console.log('');
+      process.exit(1);
+    }
+  });
 }

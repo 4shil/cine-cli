@@ -1,6 +1,14 @@
-# cine-cli
+<p align="center">
+  <a href="https://github.com/4shil/cine-cli"><img src="https://img.shields.io/badge/project-cine--cli-magenta?style=for-the-badge&logo=github" alt="Project"></a>
+  <a href="https://nodejs.org"><img src="https://img.shields.io/badge/node-%E2%89%A5%2018-green?style=for-the-badge&logo=node.js" alt="Node Version"></a>
+  <a href="https://github.com/4shil/cine-cli/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=for-the-badge" alt="License"></a>
+</p>
 
-Watch anything from your terminal. Browser-first, multi-provider, torrent web UI — one shot.
+<h1 align="center">cine-cli</h1>
+
+<p align="center">
+  <strong>Watch anything from your terminal. Browser-first, multi-provider, torrent web UI — one shot.</strong>
+</p>
 
 ```
 cine "inception"
@@ -18,6 +26,9 @@ npm install -g cine-cli
 
 > Requires **Node ≥ 18** and a modern browser. `xdg-open` (Linux), `open` (macOS), or `cmd /c start` (Windows) for handoff.
 
+> [!TIP]
+> **Ad-free Experience:** Streaming providers often contain ads. It is highly recommended to use **Brave Browser** or a browser with an ad-blocker (like uBlock Origin) for the best ad-free experience.
+
 ## Usage
 
 ```
@@ -32,6 +43,7 @@ cine [query] [options]
       --no-banner        Skip the welcome screen
       --no-color         Disable colour output
       --smoke            Run full flow in non-interactive mode (no browser open)
+  -U, --update           Update cine-cli to the latest version
   -V, --version
 ```
 
@@ -133,6 +145,12 @@ cine-cli v5.1.0+ mitigates this by overriding `ip` to `^1.1.9` (pre-CVE, no brea
 `npm audit fix --force` would roll `webtorrent` back to the 0.x API line (a different, deprecated package), which breaks cine-cli's API surface. That suggestion is incorrect for this project and should be ignored.
 
 If you find another issue, please file it at [github.com/4shil/cine-cli/issues](https://github.com/4shil/cine-cli/issues).
+
+## Inspiration & Credits
+
+This project is heavily inspired by:
+- [ani-cli](https://github.com/pystardust/ani-cli) — the ultimate CLI tool to browse and stream anime.
+- [mov-cli](https://github.com/mov-cli/mov-cli) — the modular movie scraper CLI.
 
 ## License
 
