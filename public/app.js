@@ -602,9 +602,71 @@ if (document.readyState === "loading") {
 }
 
 // show the download path on the rail
-fetch("/api/info").then((r) => r.json()).then((j) => {
-  if (j && j.downloadDir) status.dlEl.textContent = j.downloadDir;
-}).catch(() => {});
+fetch("/api/info")
+  .then((r) => r.json())
+  .then((j) => {
+    if (j && j.downloadDir) status.dlEl.textContent = j.downloadDir;
+    if (j && j.webtorrent === "missing") {
+      status.setPills([
+        { state: "warn", label: "webtorrent", value: "missing" },
+        ...(status.pillsEl ? [] : []),
+      ]);
+      if (!window.__cineInstallBanner) {
+        window.__cineInstallBanner = true;
+        const banner = document.createElement("div");
+        banner.style.cssText = "border:1px solid var(--border);background:var(--bg-warn, #332a1f);color:var(--fg-warn, #e3b341);padding:10px 12px;border-radius:8px;font:12px 'JetBrains Mono', ui-monospace, monospace;";
+        banner.innerHTML =
+          '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">' +
+            '<div><b>webtorrent missing</b> — downloads are disabled. Install it to enable torrent downloads.</div>' +
+            '<button id="cine-install-webtorrent" style="background:var(--fg-warn,#e3b341);color:#1a1a1a;border:none;border-radius:6px;padding:6px 10px;font:600 12px ' +
+              "'JetBrains Mono', ui-monospace, monospace;cursor:pointer;" +
+            '">install</button>' +
+          '</div>';
+        const target = document.querySelector(".main-head") || document.body;
+        target.parentElement.insertBefore(banner, target.nextSibling);
+        feed.push("warn", "!", "webtorrent missing — click install in the UI or run: npm install webtorrent");
+        const btn = document.getElementById("cine-install-webtorrent");
+        if (btn) {
+          btn.addEventListener("click", async () => {
+            if (btn.disabled) return;
+            btn.disabled = true;
+            btn.textContent = "installing…";
+            try {
+              const r = await fetch("/api/install/webtorrent", { method: "POST" });
+              const j = await r.json().catch(() => ({}));
+              if (!r.ok) throw new Error(j.error || `install failed (${r.status})`);
+              if (j.status === "installed") {
+                banner.remove();
+                window.__cineInstallBanner = false;
+                status.setPills([
+                  { state: "ok", label: "webtorrent", value: "installed" },
+                ]);
+                feed.push("ok", "+", "webtorrent installed — ready");
+                toast("ok", "webtorrent installed");
+              } else {
+                throw new Error(j.detail || j.error || "install did not complete");
+              }
+            } catch (err) {
+              const m = (err && err.message) || String(err);
+              feed.push("bad", "!", "install failed — " + m);
+              toast("err", m.length > 90 ? m.slice(0, 90) + "…" : m);
+              btn.disabled = false;
+              btn.textContent = "retry";
+            }
+          });
+        }
+      }
+    } else if (j && j.webtorrent === "ok") {
+      status.setPills([
+        { state: "ok", label: "webtorrent", value: "installed" },
+      ]);
+    } else if (j && j.webtorrent === "error") {
+      status.setPills([
+        { state: "bad", label: "webtorrent", value: "error" },
+      ]);
+    }
+  })
+  .catch(() => {});
 
 // boot message
 feed.push("info", "$", "runtime  ·  cine-cli torrent runtime ui  ·  v1");
