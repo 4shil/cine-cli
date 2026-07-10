@@ -41,8 +41,10 @@ const PORT = parseInt(arg('--port', '3737'), 10);
 const HOST = arg('--host', '127.0.0.1');
 const DOWNLOAD_DIR = arg('--dir', path.join(os.homedir(), 'Downloads', 'cine-cli'));
 const MAX_CONCURRENT = 5;
-const WEBTORRENT_INSTALL_HINT =
-  'WebTorrent is optional and was not installed. Install it globally to enable the torrent web server: npm install -g webtorrent';
+const WEBTORRENT_INSTALL_HINT = 'WebTorrent is optional and was not installed. Install it globally to enable the torrent web server: npm install -g webtorrent';
+const WEBTORRENT_INSTALLING = 'WebTorrent is missing. Use the button in the UI to install it into this package, or run: npm install webtorrent';
+let webTorrentInstalling = false;
+let client = WebTorrent ? new WebTorrent() : null;
 
 /**
  * Resolve the public directory.
@@ -284,7 +286,6 @@ if (HAS_INDEX) {
 
 const httpServer = createServer(app);
 const io = new SocketIOServer(httpServer, { cors: { origin: '*' } });
-const client = WebTorrent ? new WebTorrent() : null;
 
 const torrents = new Map();
 
@@ -393,12 +394,79 @@ app.get('/api/torrents', (_req, res) => {
  * /api/info/:h  → per-torrent info incl. magnet URI for the copy button.
  */
 app.get('/api/info', (_req, res) => {
+  let wtStatus = 'missing';
+  if (WebTorrent) wtStatus = 'ok';
+  else if (webTorrentLoadError) wtStatus = 'error';
   res.json({
     downloadDir: DOWNLOAD_DIR,
     version: '1',
     port: PORT,
     torrents: torrents.size,
+    webtorrent: wtStatus,
   });
+});
+
+function wtRoot() {
+  return path.resolve(WT_PACKAGE_JSON, '..');
+}
+
+function isWebTorrentInstalled() {
+  try {
+    const pkg = JSON.parse(require('fs').readFileSync(path.join(wtRoot(), 'package.json'), 'utf8'));
+    return Object.prototype.hasOwnProperty.call(pkg.dependencies || {}, 'webtorrent')
+      || Object.prototype.hasOwnProperty.call(pkg.devDependencies || {}, 'webtorrent')
+      || require('fs').existsSync(path.join(wtRoot(), 'node_modules', 'webtorrent', 'package.json'));
+  } catch {
+    return false;
+  }
+}
+
+async function reloadWebTorrent() {
+  try {
+    const mod = await import('webtorrent');
+    WebTorrent = mod.default || mod;
+    webTorrentLoadError = null;
+    if (!client && WebTorrent) client = new WebTorrent();
+    return true;
+  } catch (err) {
+    webTorrentLoadError = err;
+    return false;
+  }
+}
+
+app.post('/api/install/webtorrent', async (_req, res) => {
+  if (webTorrentInstalling) {
+    return res.status(429).json({ error: 'install already in progress' });
+  }
+  if (isWebTorrentInstalled()) {
+    return res.json({ ok: true, status: 'installed', detail: 'WebTorrent is already present' });
+  }
+  webTorrentInstalling = true;
+  process.stdout.write('[install] starting webtorrent install\n');
+  try {
+    const { spawn } = await import('node:child_process');
+    await new Promise((resolve, reject) => {
+      const child = spawn(process.execPath, ['-e', 'require("child_process").spawnSync(process.execPath, ["install", "webtorrent"], { stdio: "inherit", cwd: process.cwd() })'], {
+        cwd: wtRoot(),
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env, FORCE_COLOR: '0' },
+      });
+      let out = '';
+      child.stdout.on('data', (chunk) => { out += chunk.toString(); });
+      child.stderr.on('data', (chunk) => { out += chunk.toString(); });
+      child.on('error', reject);
+      child.on('close', (code) => {
+        if (code === 0) resolve();
+        else reject(new Error(`npm exited ${code}\n${out}`));
+      });
+    });
+    const ok = await reloadWebTorrent();
+    return res.json({ ok, status: ok ? 'installed' : 'failed', detail: ok ? 'WebTorrent installed and loaded' : webTorrentLoadError?.message || 'unknown error' });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || String(err) });
+  } finally {
+    webTorrentInstalling = false;
+  }
 });
 
 app.get('/api/info/:hash', (req, res) => {
